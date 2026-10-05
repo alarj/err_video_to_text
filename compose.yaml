@@ -1,0 +1,23 @@
+services:
+  err2text:
+    build:
+      context: .
+      args:
+        # Set this in .env to an audited immutable UglyERR commit SHA.
+        UGLYERR_REF: ${UGLYERR_REF:?Set an audited UglyERR commit SHA in .env}
+    env_file: .env
+    environment:
+      ERR2TEXT_RUNTIME_ROOT: /runtime
+      ERR2TEXT_PYTORCH_THREADS: "3"
+      HOME: /runtime/home
+      USER: err2text
+      LOGNAME: err2text
+      HF_HOME: /runtime/models/huggingface
+      XDG_CACHE_HOME: /runtime/cache
+      TORCHINDUCTOR_CACHE_DIR: /runtime/cache/torchinductor
+    volumes:
+      - ${ERR2TEXT_RUNTIME_ROOT:-/srv/err2text}:/runtime
+    user: "${ERR2TEXT_UID:?Set ERR2TEXT_UID in .env}:${ERR2TEXT_GID:?Set ERR2TEXT_GID in .env}"
+    cpus: 3.0
+    mem_limit: 12g
+    command: ["--help"]

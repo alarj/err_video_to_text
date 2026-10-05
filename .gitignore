@@ -1,0 +1,17 @@
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+
+# All operational state must live outside this checkout.
+var/
+outputs/
+cache/
+work/
+models/
+log/
+*.wav
