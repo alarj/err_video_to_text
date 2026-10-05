@@ -5,12 +5,11 @@ import json
 import sys
 from pathlib import Path
 
-from err2text.config import ensure_external_output, settings
+from err2text.config import alignment_settings, ensure_external_output, settings, whisper_settings
 from err2text.errors import ExitCode, PipelineError
 from err2text.models import RunContext
 from err2text.names.apply import apply_names, load_json
 from err2text.output import write_json, write_markdown_records
-from err2text.pipeline import process
 
 
 def parser() -> argparse.ArgumentParser:
@@ -29,12 +28,21 @@ def parser() -> argparse.ArgumentParser:
     names = sub.add_parser("apply-names", help="apply a verified manual speaker map")
     names.add_argument("--output-dir", required=True)
     names.add_argument("--speakers-map", required=True)
+    review = sub.add_parser("whisper-review", help="review selected completed-run segments with faster-whisper")
+    review.add_argument("--output-dir", required=True)
+    review.add_argument("--candidate-file", help="optional JSON file with manually selected candidate time ranges")
+    alignment = sub.add_parser("alignment-review", help="align manually marked VTT cues to audio without changing the transcript")
+    alignment.add_argument("--output-dir", required=True)
+    alignment.add_argument("--case-file", required=True, help="JSON file with manually read mixed-cue cases")
+    sentence = sub.add_parser("sentence-boundary-review", help="evaluate a model-free sentence-boundary baseline without changing the transcript")
+    sentence.add_argument("--output-dir", required=True)
+    sentence.add_argument("--case-file", required=True, help="JSON file with manually read mixed-cue cases")
     return result
 
 
 def main(argv: list[str] | None = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
-    if raw and raw[0] not in {"process", "apply-names", "-h", "--help"}:
+    if raw and raw[0] not in {"process", "apply-names", "whisper-review", "alignment-review", "sentence-boundary-review", "-h", "--help"}:
         raw.insert(0, "process")
     args = parser().parse_args(raw)
     if not getattr(args, "command", None):
@@ -51,8 +59,27 @@ def main(argv: list[str] | None = None) -> int:
             write_markdown_records(markdown, str(transcript.get("title") or "ERR transkriptsioon"), transcript.get("segments", []))
             print(str(output_dir))
             return ExitCode.SUCCESS
+        if args.command == "whisper-review":
+            from err2text.whisper_review.runner import run_review
+            candidate_path = Path(args.candidate_file).expanduser().resolve() if args.candidate_file else None
+            result = run_review(output_dir, config, whisper_settings(), candidate_path)
+            print(str(result))
+            return ExitCode.SUCCESS
+        if args.command == "alignment-review":
+            from err2text.alignment_review.runner import run_review
+            case_path = Path(args.case_file).expanduser().resolve()
+            result = run_review(output_dir, config, alignment_settings(), case_path)
+            print(str(result))
+            return ExitCode.SUCCESS
+        if args.command == "sentence-boundary-review":
+            from err2text.sentence_boundary_review.runner import run_review
+            case_path = Path(args.case_file).expanduser().resolve()
+            result = run_review(output_dir, case_path)
+            print(str(result))
+            return ExitCode.SUCCESS
         if args.min_speakers and args.max_speakers and args.min_speakers > args.max_speakers:
             raise PipelineError(ExitCode.INVALID_ARGUMENT, "--min-speakers cannot exceed --max-speakers")
+        from err2text.pipeline import process
         result = process(RunContext(source_url=args.url, output_dir=str(output_dir), time_offset_seconds=args.time_offset,
                                    min_speakers=args.min_speakers, max_speakers=args.max_speakers,
                                    no_cache=args.no_cache, keep_audio=args.keep_audio), config, args.video_index)

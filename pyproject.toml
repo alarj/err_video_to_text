@@ -12,6 +12,8 @@ dependencies = []
 [project.optional-dependencies]
 media = ["yt-dlp>=2025.1.15"]
 diarization = ["pyannote.audio>=3.3"]
+whisper-review = ["faster-whisper==1.2.1"]
+alignment-review = ["transformers"]
 test = ["pytest>=8.0"]
 
 [project.scripts]

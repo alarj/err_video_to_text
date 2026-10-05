@@ -1,0 +1,22 @@
+FROM python:3.12-slim
+
+ARG TORCH_VERSION
+ARG TRANSFORMERS_VERSION
+ARG YTDLP_VERSION
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY pyproject.toml README.md process.py ./
+RUN test -n "$TORCH_VERSION" \
+    && test -n "$TRANSFORMERS_VERSION" \
+    && test -n "$YTDLP_VERSION" \
+    && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu "torch==${TORCH_VERSION}+cpu" \
+    && pip install --no-cache-dir "transformers==${TRANSFORMERS_VERSION}" "yt-dlp==${YTDLP_VERSION}"
+COPY src ./src
+RUN pip install --no-cache-dir --no-deps .
+
+ENV PYTHONUNBUFFERED=1
+ENTRYPOINT ["python", "process.py"]

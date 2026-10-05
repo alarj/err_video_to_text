@@ -94,9 +94,30 @@ def download_audio(url: str, output_wav: Path) -> None:
     output_wav.parent.mkdir(parents=True, exist_ok=True)
     try:
         subprocess.run(["yt-dlp", "-f", "bestaudio", "-x", "--audio-format", "wav", "--postprocessor-args", "ffmpeg:-ac 1 -ar 16000", "-o", str(output_wav.with_suffix(".%(ext)s")), url], check=True, capture_output=True, text=True)
-    except (FileNotFoundError, subprocess.CalledProcessError) as error:
-        raise PipelineError(ExitCode.DOWNLOAD_FAILED, "Could not download and convert audio") from error
+    except FileNotFoundError as error:
+        raise PipelineError(ExitCode.DOWNLOAD_FAILED, "yt-dlp is not installed", {"tool": "yt-dlp"}) from error
+    except subprocess.CalledProcessError as error:
+        raise PipelineError(
+            ExitCode.DOWNLOAD_FAILED,
+            "Could not download and convert audio",
+            {"yt_dlp": error.stderr.strip()[-1000:]},
+        ) from error
     generated = next(output_wav.parent.glob(f"{output_wav.stem}.*"), None)
     if generated is None:
         raise PipelineError(ExitCode.DOWNLOAD_FAILED, "yt-dlp did not create an audio file")
     generated.replace(output_wav)
+
+
+def extract_audio_clip(source_wav: Path, output_wav: Path, start_seconds: float, end_seconds: float) -> None:
+    """Create a precise, mono 16 kHz WAV excerpt for ASR review."""
+    if end_seconds <= start_seconds:
+        raise ValueError("audio clip end must be after its start")
+    output_wav.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run([
+            "ffmpeg", "-y", "-i", str(source_wav), "-ss", f"{start_seconds:.3f}",
+            "-t", f"{end_seconds - start_seconds:.3f}", "-ac", "1", "-ar", "16000",
+            "-c:a", "pcm_s16le", str(output_wav),
+        ], check=True, capture_output=True, text=True)
+    except (FileNotFoundError, subprocess.CalledProcessError) as error:
+        raise PipelineError(ExitCode.WHISPER_REVIEW_FAILED, "Could not extract Whisper review clip") from error
