@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "source": "Claude'i tekstipõhine Reinsalu intervjuu analüüs; hüpoteesid, mitte audioga kinnitatud vead.",
+  "candidates": [
+    {"segment_id": "seg_0010", "reason": "claude_clear"},
+    {"segment_id": "seg_0038", "reason": "claude_clear"},
+    {"segment_id": "seg_0072", "reason": "claude_clear"},
+    {"segment_id": "seg_0134", "reason": "claude_probable"},
+    {"segment_id": "seg_0227", "reason": "claude_clear"},
+    {"segment_id": "seg_0231", "reason": "claude_clear"},
+    {"segment_id": "seg_0235", "reason": "claude_clear"},
+    {"segment_id": "seg_0241", "reason": "claude_clear"},
+    {"segment_id": "seg_0279", "reason": "claude_clear"},
+    {"segment_id": "seg_0282", "reason": "claude_clear"},
+    {"segment_id": "seg_0283", "reason": "claude_clear"},
+    {"segment_id": "seg_0290", "reason": "claude_clear"},
+    {"segment_id": "seg_0299", "reason": "claude_clear"},
+    {"segment_id": "seg_0331", "reason": "claude_probable"},
+    {"segment_id": "seg_0344", "reason": "claude_clear"},
+    {"segment_id": "seg_0346", "reason": "claude_clear"},
+    {"segment_id": "seg_0365", "reason": "claude_clear"},
+    {"segment_id": "seg_0373", "reason": "claude_clear"},
+    {"segment_id": "seg_0387", "reason": "claude_probable"}
+  ]
+}

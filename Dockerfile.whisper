@@ -1,0 +1,21 @@
+FROM python:3.12-slim
+
+ARG FASTER_WHISPER_VERSION
+ARG PYAV_VERSION
+ARG YTDLP_VERSION
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY pyproject.toml README.md process.py ./
+RUN test -n "$FASTER_WHISPER_VERSION" \
+    && test -n "$PYAV_VERSION" \
+    && test -n "$YTDLP_VERSION" \
+    && pip install --no-cache-dir "av==${PYAV_VERSION}" "faster-whisper==${FASTER_WHISPER_VERSION}" "yt-dlp==${YTDLP_VERSION}"
+COPY src ./src
+RUN pip install --no-cache-dir --no-deps .
+
+ENV PYTHONUNBUFFERED=1
+ENTRYPOINT ["python", "process.py"]

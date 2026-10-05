@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0",
+  "source": "Inimese lugemiskontekstiga märgitud A-tüüpi segalõigud. Püstkriips tähistab tekstilist kõnelejavahetust, mitte audiost eeldatud täpset sekundipiiri.",
+  "cases": [
+    {
+      "segment_id": "seg_0038",
+      "review_method": "read_context",
+      "verdict": "mixed_cue",
+      "before_separator_speaker": "Urmas Reinsalu",
+      "after_separator_speaker": "saatejuht",
+      "separator_after_text": "ka meie õpetajatest.",
+      "note": "Reinsalu lõpetab mõtte; saatejuht alustab küsimust sõnadega „No mis see alampalganumber”."
+    },
+    {
+      "segment_id": "seg_0072",
+      "review_method": "read_context",
+      "verdict": "mixed_cue",
+      "before_separator_speaker": "Urmas Reinsalu",
+      "after_separator_speaker": "saatejuht",
+      "separator_after_text": "et sellisel kujul ei realiseeruks.",
+      "note": "Saatejuhi järgmine küsimus algab sõnadega „Aga mitu senti”."
+    },
+    {
+      "segment_id": "seg_0124",
+      "review_method": "read_context",
+      "verdict": "mixed_cue",
+      "before_separator_speaker": "Urmas Reinsalu",
+      "after_separator_speaker": "saatejuht",
+      "separator_after_text": "inflatsioonilisest survest.",
+      "note": "Saatejuht jätkab sõnadega „Jälle see oli”."
+    },
+    {
+      "segment_id": "seg_0134",
+      "review_method": "read_context",
+      "verdict": "mixed_cue",
+      "before_separator_speaker": "saatejuht",
+      "after_separator_speaker": "Urmas Reinsalu",
+      "separator_after_text": "vaates.",
+      "note": "Saatejuhi küsimuse lõpp; Reinsalu vastus algab sõnaga „Miks”."
+    },
+    {
+      "segment_id": "seg_0155",
+      "review_method": "read_context",
+      "verdict": "mixed_cue",
+      "before_separator_speaker": "saatejuht",
+      "after_separator_speaker": "Urmas Reinsalu",
+      "separator_after_text": "see ei sõltu.",
+      "note": "Reinsalu vastus algab sõnadega „Ei sõltu ühest asjaolust”."
+    },
+    {
+      "segment_id": "seg_0175",
+      "review_method": "read_context",
+      "verdict": "mixed_cue",
+      "before_separator_speaker": "Urmas Reinsalu",
+      "after_separator_speaker": "saatejuht",
+      "separator_after_text": "ja taastada ettevõtjatele investorite kindlustunne.",
+      "note": "Saatejuhi järgmine küsimus algab sõnaga „Nii”."
+    }
+  ]
+}

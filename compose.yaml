@@ -5,19 +5,68 @@ services:
       args:
         # Set this in .env to an audited immutable UglyERR commit SHA.
         UGLYERR_REF: ${UGLYERR_REF:?Set an audited UglyERR commit SHA in .env}
+        YTDLP_VERSION: ${YTDLP_VERSION:?Set YTDLP_VERSION in .env}
     env_file: .env
     environment:
-      ERR2TEXT_RUNTIME_ROOT: /runtime
-      ERR2TEXT_PYTORCH_THREADS: "3"
-      HOME: /runtime/home
-      USER: err2text
-      LOGNAME: err2text
-      HF_HOME: /runtime/models/huggingface
-      XDG_CACHE_HOME: /runtime/cache
-      TORCHINDUCTOR_CACHE_DIR: /runtime/cache/torchinductor
+      ERR2TEXT_RUNTIME_ROOT: ${ERR2TEXT_CONTAINER_RUNTIME_ROOT:?Set ERR2TEXT_CONTAINER_RUNTIME_ROOT in .env}
+      ERR2TEXT_PYTORCH_THREADS: ${ERR2TEXT_PYTORCH_THREADS:?Set ERR2TEXT_PYTORCH_THREADS in .env}
+      HOME: ${ERR2TEXT_HOME:?Set ERR2TEXT_HOME in .env}
+      USER: ${ERR2TEXT_USER:?Set ERR2TEXT_USER in .env}
+      LOGNAME: ${ERR2TEXT_LOGNAME:?Set ERR2TEXT_LOGNAME in .env}
+      HF_HOME: ${ERR2TEXT_HF_HOME:?Set ERR2TEXT_HF_HOME in .env}
+      HF_HUB_CACHE: ${ERR2TEXT_HF_HUB_CACHE:?Set ERR2TEXT_HF_HUB_CACHE in .env}
+      XDG_CACHE_HOME: ${ERR2TEXT_XDG_CACHE_HOME:?Set ERR2TEXT_XDG_CACHE_HOME in .env}
+      TORCHINDUCTOR_CACHE_DIR: ${ERR2TEXT_TORCHINDUCTOR_CACHE_DIR:?Set ERR2TEXT_TORCHINDUCTOR_CACHE_DIR in .env}
     volumes:
-      - ${ERR2TEXT_RUNTIME_ROOT:-/srv/err2text}:/runtime
+      - ${ERR2TEXT_RUNTIME_ROOT:?Set ERR2TEXT_RUNTIME_ROOT in .env}:${ERR2TEXT_CONTAINER_RUNTIME_ROOT:?Set ERR2TEXT_CONTAINER_RUNTIME_ROOT in .env}
     user: "${ERR2TEXT_UID:?Set ERR2TEXT_UID in .env}:${ERR2TEXT_GID:?Set ERR2TEXT_GID in .env}"
-    cpus: 3.0
-    mem_limit: 12g
+    cpus: ${ERR2TEXT_WORKER_CPUS:?Set ERR2TEXT_WORKER_CPUS in .env}
     command: ["--help"]
+
+  whisper-review:
+    build:
+      context: .
+      dockerfile: Dockerfile.whisper
+      args:
+        FASTER_WHISPER_VERSION: ${FASTER_WHISPER_VERSION:?Set FASTER_WHISPER_VERSION in .env}
+        PYAV_VERSION: ${PYAV_VERSION:?Set PYAV_VERSION in .env}
+        YTDLP_VERSION: ${YTDLP_VERSION:?Set YTDLP_VERSION in .env}
+    profiles: ["whisper-review"]
+    env_file: .env
+    environment:
+      ERR2TEXT_RUNTIME_ROOT: ${ERR2TEXT_CONTAINER_RUNTIME_ROOT:?Set ERR2TEXT_CONTAINER_RUNTIME_ROOT in .env}
+      HOME: ${ERR2TEXT_HOME:?Set ERR2TEXT_HOME in .env}
+      USER: ${ERR2TEXT_USER:?Set ERR2TEXT_USER in .env}
+      LOGNAME: ${ERR2TEXT_LOGNAME:?Set ERR2TEXT_LOGNAME in .env}
+      HF_HOME: ${ERR2TEXT_HF_HOME:?Set ERR2TEXT_HF_HOME in .env}
+      HF_HUB_CACHE: ${ERR2TEXT_HF_HUB_CACHE:?Set ERR2TEXT_HF_HUB_CACHE in .env}
+      XDG_CACHE_HOME: ${ERR2TEXT_XDG_CACHE_HOME:?Set ERR2TEXT_XDG_CACHE_HOME in .env}
+    volumes:
+      - ${ERR2TEXT_RUNTIME_ROOT:?Set ERR2TEXT_RUNTIME_ROOT in .env}:${ERR2TEXT_CONTAINER_RUNTIME_ROOT:?Set ERR2TEXT_CONTAINER_RUNTIME_ROOT in .env}
+    user: "${ERR2TEXT_UID:?Set ERR2TEXT_UID in .env}:${ERR2TEXT_GID:?Set ERR2TEXT_GID in .env}"
+    cpus: ${ERR2TEXT_WORKER_CPUS:?Set ERR2TEXT_WORKER_CPUS in .env}
+    command: ["whisper-review", "--help"]
+
+  alignment-review:
+    build:
+      context: .
+      dockerfile: Dockerfile.alignment
+      args:
+        TORCH_VERSION: ${TORCH_VERSION:?Set TORCH_VERSION in .env}
+        TRANSFORMERS_VERSION: ${TRANSFORMERS_VERSION:?Set TRANSFORMERS_VERSION in .env}
+        YTDLP_VERSION: ${YTDLP_VERSION:?Set YTDLP_VERSION in .env}
+    profiles: ["alignment-review"]
+    env_file: .env
+    environment:
+      ERR2TEXT_RUNTIME_ROOT: ${ERR2TEXT_CONTAINER_RUNTIME_ROOT:?Set ERR2TEXT_CONTAINER_RUNTIME_ROOT in .env}
+      HOME: ${ERR2TEXT_HOME:?Set ERR2TEXT_HOME in .env}
+      USER: ${ERR2TEXT_USER:?Set ERR2TEXT_USER in .env}
+      LOGNAME: ${ERR2TEXT_LOGNAME:?Set ERR2TEXT_LOGNAME in .env}
+      HF_HOME: ${ERR2TEXT_HF_HOME:?Set ERR2TEXT_HF_HOME in .env}
+      HF_HUB_CACHE: ${ERR2TEXT_HF_HUB_CACHE:?Set ERR2TEXT_HF_HUB_CACHE in .env}
+      XDG_CACHE_HOME: ${ERR2TEXT_XDG_CACHE_HOME:?Set ERR2TEXT_XDG_CACHE_HOME in .env}
+    volumes:
+      - ${ERR2TEXT_RUNTIME_ROOT:?Set ERR2TEXT_RUNTIME_ROOT in .env}:${ERR2TEXT_CONTAINER_RUNTIME_ROOT:?Set ERR2TEXT_CONTAINER_RUNTIME_ROOT in .env}
+    user: "${ERR2TEXT_UID:?Set ERR2TEXT_UID in .env}:${ERR2TEXT_GID:?Set ERR2TEXT_GID in .env}"
+    cpus: ${ERR2TEXT_WORKER_CPUS:?Set ERR2TEXT_WORKER_CPUS in .env}
+    command: ["alignment-review", "--help"]
