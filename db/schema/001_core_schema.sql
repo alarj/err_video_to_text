@@ -524,7 +524,7 @@ INSERT INTO job_statuses (code, name_et, description_et) VALUES ('DIARIZING', 'K
 INSERT INTO job_statuses (code, name_et, description_et) VALUES ('MERGING', 'Transkriptsiooni koostamine', 'Seotakse tekst kõnelejate tulemustega.');
 INSERT INTO job_statuses (code, name_et, description_et) VALUES ('WAITING_FOR_PARTICIPANTS', 'Osalejate kinnitamine', 'Kasutaja peab kõnelejad osalejatega siduma.');
 INSERT INTO job_statuses (code, name_et, description_et) VALUES ('IN_REVIEW', 'Ülevaatusel', 'Kasutaja vaatab diarization-i kahtlased kohad üle.');
-INSERT INTO job_statuses (code, name_et, description_et) VALUES ('SUCCEEDED', 'Valmis', 'Lõplik transkriptsioon on valmis.');
+INSERT INTO job_statuses (code, name_et, description_et) VALUES ('SUCCEEDED', 'Ülevaatuse ootel', 'Automaatne transkriptsiooni draft on valmis; kasutaja ülevaatus on ootel.');
 INSERT INTO job_statuses (code, name_et, description_et) VALUES ('FAILED', 'Ebaõnnestus', 'Töötlus lõppes veaga.');
 INSERT INTO job_statuses (code, name_et, description_et) VALUES ('CANCELLED', 'Katkestatud', 'Töötlus katkestati.');
 

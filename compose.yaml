@@ -15,6 +15,11 @@ services:
     expose:
       - "8000"
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    networks:
+      default: {}
+      funo_net:
+        aliases:
+          - err2text-api
 
   worker:
     build:
@@ -112,3 +117,7 @@ services:
     user: "${ERR2TEXT_UID:?Set ERR2TEXT_UID in .env}:${ERR2TEXT_GID:?Set ERR2TEXT_GID in .env}"
     cpus: ${ERR2TEXT_WORKER_CPUS:?Set ERR2TEXT_WORKER_CPUS in .env}
     command: ["alignment-review", "--help"]
+
+networks:
+  funo_net:
+    external: true

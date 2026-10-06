@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 
 from app.database.oracle import connection
@@ -84,6 +84,34 @@ def create_job(request: CreateJobRequest) -> JobResponse:
             raise
 
 
+@router.get("/jobs")
+def list_jobs(limit: int = Query(default=100, ge=1, le=200)) -> list[dict[str, object]]:
+    with connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""SELECT id, submitted_url, title, status, submitted_at, resolved_at,
+                                 error_code, error_message
+                          FROM (
+                              SELECT j.id, j.submitted_url,
+                                     NVL(s.title, m.title) AS title,
+                                     st.code AS status, j.submitted_at, j.resolved_at,
+                                     j.error_code, j.error_message
+                              FROM jobs j
+                              JOIN sources s ON s.id = j.source_id
+                              JOIN media_items m ON m.id = j.media_item_id
+                              JOIN job_statuses st ON st.id = j.job_status_id
+                              WHERE j.end_date IS NULL
+                                AND s.end_date IS NULL
+                                AND m.end_date IS NULL
+                                AND st.end_date IS NULL
+                              ORDER BY j.created DESC, j.id DESC
+                          )
+                          WHERE ROWNUM <= :limit""", {"limit": limit})
+        return [{"id": row[0], "submitted_url": row[1], "title": row[2], "status": row[3],
+                 "submitted_at": _utc_iso(row[4]), "resolved_at": _utc_iso(row[5]),
+                 "error_code": row[6], "error_message": row[7]}
+                for row in cursor.fetchall()]
+
+
 @router.get("/jobs/{job_id}")
 def get_job(job_id: int) -> dict[str, object]:
     with connection() as conn:
@@ -142,7 +170,9 @@ def download_job_artifact(job_id: int, artifact_id: int):
         path = Path(str(row[0])).resolve()
         if not path.is_file():
             raise HTTPException(status_code=404, detail="Artifact file is not available")
-        return FileResponse(path, media_type=str(row[1]), filename=path.name)
+        filename = path.name.replace('"', "'").replace("\r", "").replace("\n", "")
+        headers = {"Content-Disposition": f'inline; filename="{filename}"'}
+        return FileResponse(path, media_type=str(row[1]), headers=headers)
 
 
 def _insert_source(cursor, url: str, request: CreateJobRequest) -> int:
