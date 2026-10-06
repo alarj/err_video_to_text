@@ -290,7 +290,7 @@ MVP2 veebiliides on esmalt piiratud töövahend. Selles etapis ei tehta veel kõ
 
 ### MVP2.1 — autentimiseta veebikasutus
 
-MVP2.1 avab MVP2 veebiliidese ilma autentimiseta kasutamiseks aadressil `https://err2text.fun-o.eu`. Anonüümne kasutaja saab esitada ERR-i URL-i, jälgida oma töö olekut ning avada tulemused. Kuna diarization on CPU-mahukas, tuleb enne avalikku avamist rakendada vähemalt selged samaaegsete tööde, järjekorra pikkuse, ühe päringu meediakestuse ning IP-põhise päringusageduse piirid. Piirid ja tõrketeated peavad olema kasutajale nähtavad; anonüümsele kasutajale ei lubata vaikimisi lõputut tööde arvu ega teiste kasutajate tööandmete vaatamist.
+MVP2.1 avab MVP2 veebiliidese ilma autentimiseta kasutamiseks aadressil `https://err2text.fun-o.eu`. Anonüümne kasutaja saab esitada ERR-i URL-i, jälgida oma töö olekut ning avada tulemused. Kuna diarization on CPU-mahukas, on MVP2.1 algne samaaegsuse piir konfiguratsioonist määratav ning vaikimisi üks diarization-töö korraga. MVP2.1 ei rakenda veel IP-põhist päringusageduse piirangut; see kuulub hilisemasse autentimise ja kasutuspiirangute etappi. Anonüümsele kasutajale ei lubata vaikimisi teiste kasutajate tööandmete vaatamist.
 
 ### MVP2.2 — kõnelejapiiride kasutaja–süsteemi ülevaatus
 
@@ -301,11 +301,19 @@ Skoobis on:
 - süsteemi poolt leitud kahtlaste cue’de ja võimalike speaker-piiride esitamine koos põhjusega (näiteks cue-sisene Pyannote'i üleminek, madal omistuskindlus või review-katse tulemus);
 - samas vaates originaal-VTT tekst, praegune speaker-silt, Pyannote'i ajavahemikud, võimalik tehniline kandidaat ja link/taasesitus algsele ERR-i meediale;
 - kasutaja otsus: kinnita süsteemi pakutud poolitus, lükka see tagasi, märgi speaker/piir käsitsi või jäta `needs_review` olekusse;
-- kasutaja kinnitatud paranduse salvestamine eraldi versioonitud ülevaatusotsusena koos kasutaja, aja, põhjenduse ja kasutatud lähteartefaktide kontrollsummadega; `original.vtt`, algne `speakers.json` ja automaatne põhi-`transcript.json` säilivad muutmata;
-- kasutaja otsusest tuletatud inimesele loetav parandatud transkriptsioon ning masinloetav ülekatte-/parandusfail, mille päritolu on igas muudatuses nähtav;
-- konfliktireegel, kui süsteemi uus töötlusversioon või teine kasutaja annab sama cue kohta erineva otsuse.
+- kasutaja viimase kinnituse või paranduse salvestamine vastava ülevaatuskandidaadi juurde; eraldi ülevaatusotsuste versiooniajalugu ei looda;
+- kasutaja otsusest tuletatud inimesele loetav parandatud transkriptsioon ning masinloetav ülekatte-/parandusfail; `original.vtt`, algne `speakers.json` ja automaatne põhi-`transcript.json` säilivad muutmata.
 
-MVP2.2 ei õpeta veel automaatselt uusi Pyannote'i või speaker-embeddingu mudeleid kasutaja otsustest ega kasuta neid otsuseid vaikiva automaatparandusena. Eesmärk on esmalt koguda auditeeritavad, veebis mugavalt tehtud otsused, mille põhjal saab hiljem mõõta, kas lauselõpu-reegel, forced alignment või speaker-embedding annab päriselt lisaväärtust.
+MVP2.2 ei õpeta veel automaatselt uusi Pyannote'i või speaker-embeddingu mudeleid kasutaja otsustest ega kasuta neid otsuseid vaikiva automaatparandusena. Eesmärk on esmalt koguda veebis mugavalt tehtud kinnitused ja parandused, mille põhjal saab hiljem mõõta, kas lauselõpu-reegel, forced alignment või speaker-embedding annab päriselt lisaväärtust. Ühte transkriptsiooni töötleb korraga üks kasutaja; mitme kasutaja samaaegne muutmine ja konfliktihaldus ei kuulu MVP2.2 skoopi.
+
+MVP2.2 transkriptsiooniversioonide tööpõhimõte on järgmine:
+
+- `AUTOMATIC_DRAFT` on muutumatu automaatselt loodud transkriptsioon;
+- `REVIEWED_DRAFT` on ühe kasutaja jooksvalt salvestatav tööversioon, mida veebiliidese tegevus „Salvesta muudatused” uuendab;
+- `review_candidates` hoiab iga kahtlase koha viimast olekut ja kasutaja viimast otsust, näiteks `PENDING`, `ACCEPTED`, `REJECTED` või `MODIFIED`; eraldi otsuste ajalugu ei looda;
+- parandatud tekst, poolitus ja kõnelejaseosed salvestatakse `REVIEWED_DRAFT` transkriptsioonisegmentidesse ja nende kõnelejaseostesse, mitte eraldi kohustuslike ajapiiriväljadena ülevaatuskandidaadi kirjesse;
+- kui kõik nõutud kandidaadid on käsitletud, luuakse `REVIEWED_DRAFT` põhjal muutumatu `FINAL` versioon;
+- `original.vtt`, algne `speakers.json`, `AUTOMATIC_DRAFT` ja varasem `FINAL` versioon säilivad muutmata.
 
 ### MVP3 — säilitatud korpus ja RAG
 
@@ -326,6 +334,14 @@ MVP2.3 skoobis on ka kasutajategevuse audit: kes, mida, millal ja kas veebist v�
 ### Ühised andme- ja juurutuspõhimõtted alates MVP2-st
 
 Uut andmebaasi ei lisata. Kasutatakse serveris juba olevat Oracle Database 26ai Always Free andmebaasi, kuid sellele rakendusele luuakse rangelt eraldi schema. Oracle’i skeemis hoitakse kasutajaid, transkriptsioonitöid, allikaid, väljundite metaandmeid, tegevuslogi ja API-võtmete räsi. Mahukaid audio-, VTT- ja JSON-faile ei salvestata andmebaasi; andmebaasis hoitakse nende viiteid, kontrollsummasid ja metaandmeid. Hilisemas RAG-etapis kasutatakse sama Oracle’i AI Vector Searchi nii embeddingute kui relatsioonilise metadata hübriidotsinguks.
+
+#### Aja autoriteetsus ja ajavööndid
+
+- Oracle’i andmebaasi autoriteetne aeg on UTC.
+- Andmebaasi loodud ja API kaudu loetavad ajatemplid käsitletakse UTC-ajadena.
+- API edastab ajad üheselt UTC-na, kasutades ISO 8601 vormingut ja `Z`-tähist.
+- Brauser teisendab kuvatavad ajad kasutaja lokaalsesse ajavööndisse.
+- Äriloogika ja ajalised võrdlused lähtuvad UTC-ajateljest.
 
 Oracle’i kasutamine ORDS REST-vahekihi kaudu ei ole nõue. FastAPI ja worker võivad kasutada eraldi skeemiga Oracle’i otse `python-oracledb` abil; ORDS on ainult võimalik alternatiiv. Valitud lahendus peab kasutama ühenduste pooli, `.env`-põhiseid saladusi, migratsioone ning väikseimate õiguste põhimõtet. Andmebaas ei ole kunagi brauserile avalik.
 

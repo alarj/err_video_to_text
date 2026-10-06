@@ -2,7 +2,7 @@
 
 See fail on Gitiga versioonitav teadmiste register: kinnitatud järeldused,
 otsused ja kõrvale jäetud lahendused. Üksikasjalik käituslogi on ignoreeritud
-failis [`log/build_and_run_log.md`](log/build_and_run_log.md).
+failis [`log/build_and_run_log.md`](../log/build_and_run_log.md).
 
 ## Katsete ülevaade
 
