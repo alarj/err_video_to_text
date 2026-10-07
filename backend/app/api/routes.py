@@ -1062,6 +1062,154 @@ def save_participant_review(job_id: int, request: ParticipantReviewRequest) -> d
     }
 
 
+@router.post("/jobs/{job_id}/finalize")
+def finalize_job(job_id: int) -> dict[str, object]:
+    """Create the immutable FINAL version from the current reviewed draft."""
+    created_paths: list[Path] = []
+    with connection() as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """SELECT status, media_item_id FROM processes
+                    WHERE id = :process_id AND end_date IS NULL FOR UPDATE""",
+                {"process_id": job_id},
+            )
+            process = cursor.fetchone()
+            if process is None:
+                raise HTTPException(status_code=404, detail="Process not found")
+            if process[0] != "IN_REVIEW":
+                raise HTTPException(status_code=409, detail="Process must be IN_REVIEW before finalization")
+
+            cursor.execute(
+                """SELECT id, version_number FROM transcript_versions
+                    WHERE process_id = :process_id AND version_type = 'REVIEWED_DRAFT'
+                      AND end_date IS NULL ORDER BY version_number DESC
+                    FETCH FIRST 1 ROW ONLY""",
+                {"process_id": job_id},
+            )
+            reviewed = cursor.fetchone()
+            if reviewed is None:
+                raise HTTPException(status_code=409, detail="REVIEWED_DRAFT is not available")
+            reviewed_version_id = int(reviewed[0])
+
+            cursor.execute(
+                """SELECT COUNT(*) FROM review_candidates rc
+                    JOIN transcript_segments s ON s.id = rc.transcript_segment_id
+                    WHERE s.transcript_version_id = (
+                        SELECT id FROM transcript_versions
+                         WHERE process_id = :process_id AND version_type = 'AUTOMATIC_DRAFT'
+                           AND end_date IS NULL FETCH FIRST 1 ROW ONLY)
+                      AND rc.end_date IS NULL AND rc.status = 'PENDING'""",
+                {"process_id": job_id},
+            )
+            pending = int(cursor.fetchone()[0])
+            if pending:
+                raise HTTPException(status_code=409, detail={"message": "All review candidates must be resolved", "pending": pending})
+            cursor.execute(
+                """SELECT COUNT(*) FROM transcript_participants
+                    WHERE transcript_version_id = :version_id AND end_date IS NULL
+                      AND mapping_status = 'UNCONFIRMED'""",
+                {"version_id": reviewed_version_id},
+            )
+            unresolved = int(cursor.fetchone()[0])
+            if unresolved:
+                raise HTTPException(status_code=409, detail={"message": "All speakers must be confirmed or marked UNKNOWN", "unresolved": unresolved})
+
+            cursor.execute("SELECT id FROM activities WHERE process_id = :process_id AND activity_type = 'IN_REVIEW' AND finished_at IS NULL AND end_date IS NULL ORDER BY id DESC FETCH FIRST 1 ROW ONLY", {"process_id": job_id})
+            activity = cursor.fetchone()
+            if activity is None:
+                raise HTTPException(status_code=409, detail="Active IN_REVIEW activity is not available")
+            activity_id = int(activity[0])
+
+            cursor.execute("SELECT NVL(MAX(version_number), 0) + 1 FROM transcript_versions WHERE process_id = :process_id", {"process_id": job_id})
+            next_version = int(cursor.fetchone()[0])
+            version_var = cursor.var(int)
+            cursor.execute(
+                """INSERT INTO transcript_versions
+                   (process_id, activity_id, version_number, version_type, status)
+                   VALUES (:process_id, :activity_id, :version_number, 'FINAL', 'FINAL')
+                   RETURNING id INTO :version_id""",
+                {"process_id": job_id, "activity_id": activity_id, "version_number": next_version, "version_id": version_var},
+            )
+            final_version_id = int(version_var.getvalue()[0])
+
+            cursor.execute("SELECT id, speaker_label, participant_id, role, mapping_status FROM transcript_participants WHERE transcript_version_id = :version_id AND end_date IS NULL ORDER BY id", {"version_id": reviewed_version_id})
+            participant_map: dict[int, int] = {}
+            for old_id, label, participant_id, role, mapping_status in cursor.fetchall():
+                out = cursor.var(int)
+                cursor.execute(
+                    """INSERT INTO transcript_participants
+                       (transcript_version_id, speaker_label, participant_id, role, mapping_status)
+                       VALUES (:version_id, :label, :participant_id, :role, :mapping_status)
+                       RETURNING id INTO :new_id""",
+                    {"version_id": final_version_id, "label": label, "participant_id": participant_id, "role": role, "mapping_status": mapping_status, "new_id": out},
+                )
+                participant_map[int(old_id)] = int(out.getvalue()[0])
+
+            cursor.execute("SELECT id, segment_number, start_second, end_second, text, segment_type, source_segment_id FROM transcript_segments WHERE transcript_version_id = :version_id AND end_date IS NULL ORDER BY segment_number, id", {"version_id": reviewed_version_id})
+            segment_map: dict[int, int] = {}
+            for old_id, number, start, end, text_value, segment_type, source_id in cursor.fetchall():
+                out = cursor.var(int)
+                cursor.execute(
+                    """INSERT INTO transcript_segments
+                       (transcript_version_id, segment_number, start_second, end_second, text, segment_type, source_segment_id)
+                       VALUES (:version_id, :segment_number, :start_second, :end_second, :text_value, :segment_type, :source_id)
+                       RETURNING id INTO :new_id""",
+                    {"version_id": final_version_id, "segment_number": number, "start_second": start, "end_second": end, "text_value": text_value, "segment_type": segment_type, "source_id": source_id, "new_id": out},
+                )
+                segment_map[int(old_id)] = int(out.getvalue()[0])
+
+            cursor.execute("""SELECT transcript_segment_id, transcript_participant_id, start_second, end_second, confidence
+                              FROM transcript_segment_speakers WHERE transcript_segment_id IN
+                              (SELECT id FROM transcript_segments WHERE transcript_version_id = :version_id)
+                                AND end_date IS NULL ORDER BY id""", {"version_id": reviewed_version_id})
+            for old_segment_id, old_participant_id, start, end, confidence in cursor.fetchall():
+                cursor.execute("""INSERT INTO transcript_segment_speakers
+                           (transcript_segment_id, transcript_participant_id, start_second, end_second, confidence)
+                           VALUES (:segment_id, :participant_id, :start_second, :end_second, :confidence)""",
+                               {"segment_id": segment_map[int(old_segment_id)], "participant_id": participant_map[int(old_participant_id)], "start_second": start, "end_second": end, "confidence": confidence})
+
+            cursor.execute("""SELECT a.path FROM transcript_versions tv
+                              JOIN transcript_artifacts ta ON ta.transcript_version_id = tv.id
+                              JOIN artifacts a ON a.id = ta.artifact_id
+                             WHERE tv.process_id = :process_id AND tv.version_type = 'AUTOMATIC_DRAFT'
+                               AND tv.end_date IS NULL AND ta.end_date IS NULL AND a.end_date IS NULL
+                             ORDER BY a.id FETCH FIRST 1 ROW ONLY""", {"process_id": job_id})
+            source = cursor.fetchone()
+            if source is None:
+                raise HTTPException(status_code=409, detail="Automatic transcript artifact is not available")
+            source_path = Path(str(source[0])).resolve()
+            source_path.parent.mkdir(parents=True, exist_ok=True)
+            markdown_path = source_path.parent / "final.md"
+            json_path = source_path.parent / "final.json"
+            markdown, json_content = _render_transcript_version(cursor, final_version_id, "FINAL")
+            markdown_path.write_bytes(markdown)
+            json_path.write_bytes(json_content)
+            created_paths.extend((markdown_path, json_path))
+            for artifact_type, path, content_type, content in (("FINAL_MARKDOWN", markdown_path, "text/markdown", markdown), ("FINAL_JSON", json_path, "application/json", json_content)):
+                digest = sha256(content).hexdigest()
+                artifact_var = cursor.var(int)
+                cursor.execute("""INSERT INTO artifacts (artifact_type, path, content_type, size_byte, sha256)
+                                  VALUES (:artifact_type, :path, :content_type, :size_byte, :sha256)
+                                  RETURNING id INTO :artifact_id""", {"artifact_type": artifact_type, "path": str(path), "content_type": content_type, "size_byte": len(content), "sha256": digest, "artifact_id": artifact_var})
+                artifact_id = int(artifact_var.getvalue()[0])
+                cursor.execute("INSERT INTO transcript_artifacts (transcript_version_id, artifact_id) VALUES (:version_id, :artifact_id)", {"version_id": final_version_id, "artifact_id": artifact_id})
+                cursor.execute("INSERT INTO activity_artifacts (activity_id, artifact_id) VALUES (:activity_id, :artifact_id)", {"activity_id": activity_id, "artifact_id": artifact_id})
+
+            cursor.execute("UPDATE activities SET finished_at = SYSTIMESTAMP, result = 'OK', last_updated = SYSTIMESTAMP WHERE id = :activity_id AND finished_at IS NULL", {"activity_id": activity_id})
+            cursor.execute("UPDATE processes SET status = 'FINISHED', finished_at = SYSTIMESTAMP, last_updated = SYSTIMESTAMP WHERE id = :process_id AND status = 'IN_REVIEW'", {"process_id": job_id})
+            conn.commit()
+            return {"process_id": job_id, "status": "FINISHED", "transcript_version_id": final_version_id, "artifacts": [str(markdown_path), str(json_path)]}
+        except Exception:
+            conn.rollback()
+            for path in created_paths:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise
+
+
 @router.get("/jobs/{job_id}/artifacts/{artifact_id}")
 def download_job_artifact(job_id: int, artifact_id: int):
     with connection() as conn:
@@ -1142,6 +1290,45 @@ def _upsert_reviewed_artifact(cursor, version_id: int, artifact_type: str, path:
             {"artifact_type": artifact_type, "path": str(path), "content_type": content_type,
              "size_byte": len(content), "sha256": digest, "artifact_id": int(existing[0])},
         )
+
+
+def _render_transcript_version(cursor, version_id: int, version_type: str) -> tuple[bytes, bytes]:
+    cursor.execute(
+        """SELECT s.id, s.segment_number, s.start_second, s.end_second, s.text, s.segment_type,
+                  tp.speaker_label, p.name, ss.start_second, ss.end_second, ss.confidence
+             FROM transcript_segments s
+             LEFT JOIN transcript_segment_speakers ss ON ss.transcript_segment_id = s.id AND ss.end_date IS NULL
+             LEFT JOIN transcript_participants tp ON tp.id = ss.transcript_participant_id AND tp.end_date IS NULL
+             LEFT JOIN participants p ON p.id = tp.participant_id AND p.end_date IS NULL
+            WHERE s.transcript_version_id = :version_id AND s.end_date IS NULL
+            ORDER BY s.segment_number, s.id, ss.id""", {"version_id": version_id})
+    segments: list[dict[str, object]] = []
+    current = None
+    for segment_id, number, start, end, text_value, segment_type, label, name, speaker_start, speaker_end, confidence in cursor.fetchall():
+        if current is None or int(segment_id) != current["id"]:
+            current = {"id": int(segment_id), "segment_number": int(number), "start_second": float(start), "end_second": float(end), "text": text_value, "segment_type": segment_type, "speakers": []}
+            segments.append(current)
+        if label is not None:
+            current["speakers"].append({"speaker_label": label, "participant_name": name, "start_second": float(speaker_start), "end_second": float(speaker_end), "confidence": float(confidence)})
+    for segment in segments:
+        totals: dict[tuple[object, object], float] = {}
+        for speaker in segment["speakers"]:
+            key = (speaker.get("speaker_label"), speaker.get("participant_name"))
+            totals[key] = totals.get(key, 0.0) + max(0.0, float(speaker["end_second"]) - float(speaker["start_second"]))
+        dominant = max(totals.items(), key=lambda item: item[1], default=None)
+        segment["dominant_speaker"] = ({"speaker_label": dominant[0][0], "participant_name": dominant[0][1], "duration_second": dominant[1]} if dominant else None)
+    lines = ["# Transkriptsioon", ""]
+    for segment in segments:
+        timestamp = _format_transcript_time(segment["start_second"])
+        if segment["segment_type"] == "SYSTEM_NOTICE":
+            lines.append(f"*Ekraaniteade ({timestamp}): {segment['text']}*")
+        else:
+            dominant = segment.get("dominant_speaker") or {}
+            speaker = dominant.get("participant_name") or dominant.get("speaker_label")
+            lines.append(f"*{timestamp}* {f'**{speaker}** ' if speaker else ''}{segment['text']}")
+        lines.append("")
+    markdown = ("\n".join(lines).rstrip() + "\n").encode("utf-8")
+    return markdown, (json.dumps({"version_id": version_id, "version_type": version_type, "segments": segments}, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
 
 
 def _regenerate_reviewed_artifacts(process_id: int, version_id: int | None = None) -> bool:
