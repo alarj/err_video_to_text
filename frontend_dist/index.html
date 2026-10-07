@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="stylesheet" href="./assets/app.css?v=10" />
+    <link rel="stylesheet" href="./assets/app.css?v=13" />
     <title>ERR2TEXT</title>
   </head>
   <body>
@@ -83,7 +83,10 @@
     </main>
     <dialog id="artifactViewer" class="artifact-viewer" aria-modal="true">
       <div class="artifact-viewer-head">
-        <h2 id="artifactViewerTitle"></h2>
+        <div class="artifact-viewer-document">
+          <label class="artifact-viewer-select-label" for="artifactViewerSelect" data-i18n="artifacts.select"></label>
+          <select id="artifactViewerSelect"></select>
+        </div>
         <div class="artifact-viewer-actions">
           <button id="artifactViewerDownload" class="secondary-button" type="button" data-i18n="artifacts.download"></button>
           <button id="artifactViewerClose" class="secondary-button" type="button" data-i18n="artifacts.close"></button>
@@ -107,6 +110,18 @@
       <div class="job-viewer-head"><h2 data-i18n="history.processing_title"></h2><button id="jobHistoryClose" class="secondary-button" type="button" data-i18n="artifacts.close"></button></div>
       <div id="jobHistoryContent" class="job-history-content"></div>
     </dialog>
-    <script src="./assets/app.js?v=26" defer></script>
+    <dialog id="participantReviewViewer" class="participant-review-viewer" aria-modal="true">
+      <div class="job-viewer-head">
+        <h2 data-i18n="participants.title"></h2>
+        <button id="participantReviewClose" class="secondary-button" type="button" data-i18n="artifacts.close"></button>
+      </div>
+      <p id="participantReviewMessage" class="message" role="status" aria-live="polite"></p>
+      <div id="participantReviewContent" class="participant-review-content"></div>
+      <div class="participant-review-actions">
+        <button id="participantReviewSave" type="button" data-i18n="participants.save"></button>
+      </div>
+    </dialog>
+    <script src="./assets/vendor/hls-1.6.13.min.js" defer></script>
+    <script src="./assets/app.js?v=45" defer></script>
   </body>
 </html>

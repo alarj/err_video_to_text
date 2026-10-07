@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, HttpUrl
 
 
@@ -31,3 +33,22 @@ class JobResponse(BaseModel):
     id: int
     status: str
     reused: bool = False
+
+
+class ParticipantCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=500)
+    description: str | None = Field(default=None, max_length=4000)
+    organisation: str | None = Field(default=None, max_length=500)
+    occupation: str | None = Field(default=None, max_length=500)
+
+
+class SpeakerMapping(BaseModel):
+    speaker_label: str = Field(min_length=1, max_length=80)
+    participant_id: int | None = Field(default=None, gt=0)
+    role: str | None = Field(default=None, max_length=120)
+    mapping_status: Literal["UNCONFIRMED", "CONFIRMED", "UNKNOWN"]
+
+
+class ParticipantReviewRequest(BaseModel):
+    mappings: list[SpeakerMapping] = Field(default_factory=list)
+    confirm: bool = False

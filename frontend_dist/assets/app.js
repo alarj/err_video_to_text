@@ -14,12 +14,14 @@ const state = {
   staleHistoryJobIds: new Set(),
   staleJobStatus: false,
   translations: null,
+  participantReview: null,
+  participantPlayers: new Map(),
 };
 
 const $ = (selector) => document.querySelector(selector);
 
 async function loadTranslations() {
-  const response = await fetch("./assets/i18n/et.json?v=2");
+  const response = await fetch("./assets/i18n/et.json?v=4");
   if (!response.ok) throw new Error("Translations could not be loaded");
   state.translations = await response.json();
   document.querySelectorAll("[data-i18n]").forEach((element) => {
@@ -210,6 +212,343 @@ function renderEvents(events) {
   });
 }
 
+function destroyParticipantPlayers() {
+  for (const player of state.participantPlayers.values()) {
+    player.destroy?.();
+  }
+  state.participantPlayers.clear();
+}
+
+function participantVideo(video, message, url) {
+  if (window.Hls?.isSupported()) {
+    const hls = new window.Hls({ enableWorker: true });
+    hls.loadSource(url);
+    hls.attachMedia(video);
+    hls.on(window.Hls.Events.ERROR, (_event, data) => {
+      if (data?.fatal) message.textContent = translate("participants.player_error");
+    });
+    return { destroy: () => { hls.destroy(); video.pause(); } };
+  }
+  if (video.canPlayType("application/vnd.apple.mpegurl")) {
+    video.src = url;
+    const onError = () => { message.textContent = translate("participants.player_error"); };
+    video.addEventListener("error", onError);
+    return {
+      destroy: () => {
+        video.removeEventListener("error", onError);
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+      },
+    };
+  }
+  message.textContent = translate("participants.player_unsupported");
+  return { destroy: () => {} };
+}
+
+function playParticipantSample(video, sample) {
+  const previous = video.__sampleEndHandler;
+  if (previous) video.removeEventListener("timeupdate", previous);
+  if (video.__sampleSeekHandler) {
+    video.removeEventListener("loadedmetadata", video.__sampleSeekHandler);
+    video.__sampleSeekHandler = null;
+  }
+  const seek = () => {
+    video.__sampleSeekHandler = null;
+    video.currentTime = Number(sample.start_second);
+    video.play().catch(() => {});
+  };
+  if (video.readyState >= 1) seek();
+  else {
+    video.__sampleSeekHandler = seek;
+    video.addEventListener("loadedmetadata", seek, { once: true });
+  }
+  const stopAtEnd = () => {
+    if (video.currentTime >= Number(sample.end_second)) {
+      video.pause();
+      video.removeEventListener("timeupdate", stopAtEnd);
+      video.__sampleEndHandler = null;
+    }
+  };
+  video.__sampleEndHandler = stopAtEnd;
+  video.addEventListener("timeupdate", stopAtEnd);
+}
+
+function participantMapping(card) {
+  const input = card.querySelector(".participant-input");
+  const unknown = isUnknownParticipantInput(input);
+  const value = normalizeParticipantName(input.value);
+  return {
+    speaker_label: card.dataset.speakerLabel,
+    participant_id: value && !unknown ? Number(input.dataset.participantId || 0) || null : null,
+    role: card.querySelector(".participant-role").value.trim() || null,
+    participant_name: value,
+    description: card.querySelector(".participant-description").value.trim() || null,
+    organisation: card.querySelector(".participant-organisation").value.trim() || null,
+    occupation: card.querySelector(".participant-occupation").value.trim() || null,
+    mapping_status: unknown ? "UNKNOWN" : value ? "CONFIRMED" : "UNCONFIRMED",
+  };
+}
+
+function isUnknownParticipantInput(input) {
+  return input.value.trim().toLocaleLowerCase() === translate("participants.unknown").toLocaleLowerCase();
+}
+
+function normalizeParticipantName(value) {
+  return String(value || "").trim().split(/\s+/).filter(Boolean).map((word) => {
+    const letters = Array.from(word.toLocaleLowerCase("et-EE"));
+    return letters.length ? letters[0].toLocaleUpperCase("et-EE") + letters.slice(1).join("") : "";
+  }).join(" ");
+}
+
+function addParticipantOption(list, participant) {
+  const existing = [...list.options].find((option) => option.dataset.participantId === String(participant.id));
+  if (existing) return;
+  const option = document.createElement("option");
+  option.value = participant.name;
+  option.dataset.participantId = String(participant.id);
+  option.textContent = participant.name;
+  list.appendChild(option);
+}
+
+function addParticipantToAllLists(participant) {
+  document.querySelectorAll(".participant-options").forEach((list) => addParticipantOption(list, participant));
+}
+
+function participantByInput(input) {
+  const name = input.value.trim().toLocaleLowerCase();
+  return state.participantReview?.participants.find((participant) => participant.name.trim().toLocaleLowerCase() === name) || null;
+}
+
+function updateParticipantDetails(card) {
+  const input = card.querySelector(".participant-input");
+  const unknown = isUnknownParticipantInput(input);
+  const participant = !unknown ? participantByInput(input) : null;
+  const editFields = card.querySelector(".participant-new-details");
+  const existingDetails = card.querySelector(".participant-existing-details");
+  if (!participant) {
+    editFields.querySelectorAll("input, textarea").forEach((field) => { field.value = ""; });
+  }
+  editFields.classList.toggle("hidden", Boolean(participant) || unknown || !input.value.trim());
+  existingDetails.classList.toggle("hidden", !participant || unknown);
+  if (participant) {
+    existingDetails.querySelector("[data-detail=description]").textContent = participant.description || "—";
+    existingDetails.querySelector("[data-detail=organisation]").textContent = participant.organisation || "—";
+    existingDetails.querySelector("[data-detail=occupation]").textContent = participant.occupation || "—";
+  }
+}
+
+function renderParticipantReview(data, participants) {
+  const container = $("#participantReviewContent");
+  container.replaceChildren();
+  destroyParticipantPlayers();
+  data.speakers.forEach((speaker) => {
+    const card = document.createElement("article");
+    card.className = "speaker-review-card";
+    card.dataset.speakerLabel = speaker.speaker_label;
+    const heading = document.createElement("div");
+    heading.className = "speaker-review-heading";
+    const title = document.createElement("h3");
+    title.textContent = speaker.speaker_label;
+    heading.appendChild(title);
+    const mapping = document.createElement("div");
+    mapping.className = "speaker-mapping-fields";
+    const selectLabel = document.createElement("label");
+    selectLabel.textContent = translate("participants.person");
+    const input = document.createElement("input");
+    input.className = "participant-input";
+    input.type = "text";
+    input.maxLength = 500;
+    input.placeholder = translate("participants.search_placeholder");
+    const list = document.createElement("datalist");
+    list.id = `participant-options-${speaker.speaker_label}`;
+    list.className = "participant-options";
+    const unknownOption = document.createElement("option");
+    unknownOption.value = translate("participants.unknown");
+    list.appendChild(unknownOption);
+    participants.forEach((participant) => addParticipantOption(list, participant));
+    if (speaker.participant_id != null) {
+      addParticipantOption(list, {
+        id: speaker.participant_id,
+        name: speaker.participant_name || `#${speaker.participant_id}`,
+      });
+    }
+    input.setAttribute("list", list.id);
+    input.value = speaker.mapping_status === "UNKNOWN" ? translate("participants.unknown") : (speaker.participant_name || "");
+    if (speaker.participant_id != null) input.dataset.participantId = String(speaker.participant_id);
+    const inputRow = document.createElement("div");
+    inputRow.className = "participant-input-row";
+    const clearInput = document.createElement("button");
+    clearInput.type = "button";
+    clearInput.className = "participant-clear-input";
+    clearInput.textContent = "×";
+    clearInput.title = translate("participants.clear_name");
+    clearInput.setAttribute("aria-label", translate("participants.clear_name"));
+    clearInput.addEventListener("click", () => {
+      input.value = "";
+      input.dataset.participantId = "";
+      input.dispatchEvent(new Event("input"));
+      input.focus();
+    });
+    input.addEventListener("input", () => {
+      const match = [...list.options].find((option) => option.value.trim().toLocaleLowerCase() === input.value.trim().toLocaleLowerCase());
+      input.dataset.participantId = match?.dataset.participantId || "";
+      if (match && !match.dataset.participantId) input.value = match.value;
+      updateParticipantDetails(card);
+    });
+    input.addEventListener("blur", () => {
+      input.value = normalizeParticipantName(input.value);
+      input.dispatchEvent(new Event("input"));
+    });
+    inputRow.append(input, clearInput);
+    selectLabel.append(inputRow, list);
+    const participantDetails = [
+      ["description", "participants.description", 4000],
+      ["organisation", "participants.organisation", 500],
+      ["occupation", "participants.occupation", 500],
+    ];
+    const existingDetails = document.createElement("div");
+    existingDetails.className = "participant-existing-details hidden";
+    participantDetails.forEach(([field, labelKey]) => {
+      const line = document.createElement("div");
+      line.className = "participant-existing-detail";
+      line.innerHTML = `<span>${translate(labelKey)}</span><strong data-detail="${field}">—</strong>`;
+      existingDetails.appendChild(line);
+    });
+    const newDetails = document.createElement("div");
+    newDetails.className = "participant-new-details hidden";
+    const detailLabels = participantDetails.map(([field, labelKey, maxLength]) => {
+      const label = document.createElement("label");
+      label.textContent = translate(labelKey);
+      const detail = document.createElement(field === "description" ? "textarea" : "input");
+      detail.className = `participant-${field}`;
+      detail.maxLength = maxLength;
+      detail.rows = field === "description" ? 2 : undefined;
+      label.appendChild(detail);
+      return label;
+    });
+    newDetails.append(...detailLabels);
+    const roleLabel = document.createElement("label");
+    roleLabel.textContent = translate("participants.role");
+    const role = document.createElement("input");
+    role.className = "participant-role";
+    role.type = "text";
+    role.maxLength = 120;
+    role.value = speaker.role || "";
+    roleLabel.appendChild(role);
+    mapping.append(selectLabel, existingDetails, newDetails, roleLabel);
+    const samples = document.createElement("div");
+    samples.className = "speaker-samples";
+    const video = document.createElement("video");
+    video.className = "speaker-sample-video";
+    video.controls = true;
+    video.preload = "metadata";
+    video.playsInline = true;
+    samples.appendChild(video);
+    const playerMessage = document.createElement("p");
+    playerMessage.className = "speaker-player-message";
+    playerMessage.setAttribute("role", "status");
+    samples.appendChild(playerMessage);
+    const sampleButtons = document.createElement("div");
+    sampleButtons.className = "speaker-sample-buttons";
+    speaker.samples.forEach((sample, index) => {
+      const sampleCard = document.createElement("div");
+      sampleCard.className = "speaker-sample";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "secondary-button sample-button";
+      button.textContent = `${translate("participants.sample")} ${index + 1} · ${formatSeconds(sample.start_second)}–${formatSeconds(sample.end_second)}`;
+      button.addEventListener("click", () => playParticipantSample(video, sample));
+      const text = document.createElement("p");
+      text.className = "speaker-sample-text";
+      text.textContent = sample.text;
+      sampleCard.append(button, text);
+      sampleButtons.appendChild(sampleCard);
+    });
+    samples.appendChild(sampleButtons);
+    card.append(heading, mapping, samples);
+    container.appendChild(card);
+    updateParticipantDetails(card);
+    state.participantPlayers.set(speaker.speaker_label, participantVideo(video, playerMessage, data.media.url));
+  });
+}
+
+function formatSeconds(value) {
+  const seconds = Math.max(0, Number(value) || 0);
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const clock = `${String(minutes).padStart(2, "0")}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+  return hours ? `${String(hours).padStart(2, "0")}:${clock}` : clock;
+}
+
+async function showParticipantReview(jobId) {
+  const dialog = $("#participantReviewViewer");
+  const message = $("#participantReviewMessage");
+  const content = $("#participantReviewContent");
+  state.participantReview = { jobId };
+  message.textContent = translate("participants.loading");
+  content.replaceChildren();
+  dialog.showModal();
+  try {
+    const [data, participants] = await Promise.all([
+      request(`/jobs/${jobId}/participant-review`),
+      request("/participants"),
+    ]);
+    state.participantReview.data = data;
+    state.participantReview.participants = participants;
+    renderParticipantReview(data, participants);
+    message.textContent = "";
+  } catch (error) {
+    message.textContent = error.message;
+  }
+}
+
+async function saveParticipantReview() {
+  if (!state.participantReview) return;
+  const saveButton = $("#participantReviewSave");
+  saveButton.disabled = true;
+  try {
+  const mappings = [...document.querySelectorAll(".speaker-review-card")].map(participantMapping);
+  for (const mapping of mappings) {
+    if (mapping.mapping_status !== "CONFIRMED" || mapping.participant_id) continue;
+    const existing = state.participantReview.participants.find((participant) => participant.name.trim().toLocaleLowerCase() === mapping.participant_name.trim().toLocaleLowerCase());
+    const participant = existing || await request("/participants", {
+      method: "POST",
+      body: JSON.stringify({
+        name: mapping.participant_name,
+        description: mapping.description,
+        organisation: mapping.organisation,
+        occupation: mapping.occupation,
+      }),
+    });
+    if (!existing) {
+      state.participantReview.participants.push(participant);
+      addParticipantToAllLists(participant);
+    }
+    mapping.participant_id = participant.id;
+  }
+  const unresolved = mappings.filter((mapping) => mapping.mapping_status === "UNCONFIRMED");
+    const result = await request(`/jobs/${state.participantReview.jobId}/participant-review`, {
+      method: "PUT",
+      body: JSON.stringify({ mappings, confirm: unresolved.length === 0 }),
+    });
+    $("#participantReviewMessage").textContent = result.unresolved_labels?.length
+      ? `${translate("participants.saved_partial")}: ${result.unresolved_labels.join(", ")}`
+      : translate("participants.saved");
+    if (result.confirmed) {
+      const confirmedJobId = state.participantReview.jobId;
+      destroyParticipantPlayers();
+      $("#participantReviewViewer").close();
+      await loadHistory();
+      if (state.job?.id === confirmedJobId) await refreshJob();
+    }
+  } catch (error) {
+    $("#participantReviewMessage").textContent = error.message;
+  } finally {
+    saveButton.disabled = false;
+  }
+}
+
 function renderArtifacts(artifacts) {
   const container = $("#artifactList");
   container.replaceChildren();
@@ -228,13 +567,20 @@ function buildArtifactLinks(artifacts, jobId) {
   wrapper.appendChild(heading);
   const primary = [];
   const seenPrimaryTypes = new Set();
-  artifacts.filter((artifact) => ["MD", "VTT"].includes(artifact.artifact_type)).forEach((artifact) => {
-    if (!seenPrimaryTypes.has(artifact.artifact_type)) {
-      seenPrimaryTypes.add(artifact.artifact_type);
+  const primaryArtifacts = artifacts
+    .filter((artifact) => ["MD", "VTT"].includes(artifactCategory(artifact)))
+    .sort((left, right) => {
+      const order = { MD: 0, VTT: 1 };
+      return order[artifactCategory(left)] - order[artifactCategory(right)];
+    });
+  primaryArtifacts.forEach((artifact) => {
+    const category = artifactCategory(artifact);
+    if (!seenPrimaryTypes.has(category)) {
+      seenPrimaryTypes.add(category);
       primary.push(artifact);
     }
   });
-  const technical = artifacts.filter((artifact) => !["MD", "VTT"].includes(artifact.artifact_type));
+  const technical = artifacts.filter((artifact) => !["MD", "VTT"].includes(artifactCategory(artifact)));
   const primaryList = document.createElement("ul");
   primary.forEach((artifact) => primaryList.appendChild(buildArtifactLink(artifact, jobId)));
   wrapper.appendChild(primaryList);
@@ -250,58 +596,133 @@ function buildArtifactLinks(artifacts, jobId) {
   return wrapper;
 }
 
+function artifactCategory(artifact) {
+  const type = String(artifact.artifact_type || "").toUpperCase();
+  if (type === "MD" || type.includes("TRANSCRIPT_MARKDOWN")) return "MD";
+  if (type === "VTT" || type.endsWith("_VTT")) return "VTT";
+  return type;
+}
+
 function buildArtifactLink(artifact, jobId) {
   const row = document.createElement("li");
   const link = document.createElement("a");
   link.href = `${API_BASE}/jobs/${jobId}/artifacts/${artifact.id}`;
   link.target = "_blank";
   link.rel = "noopener";
-  if (["MD", "VTT"].includes(artifact.artifact_type)) {
-    link.addEventListener("click", (event) => {
-      event.preventDefault();
-      openArtifactViewer(link.href, artifact.artifact_type);
-    });
-  } else {
-    link.addEventListener("click", (event) => {
-      event.preventDefault();
-      window.open(link.href, "_blank", "noopener,noreferrer");
-    });
-  }
-  link.textContent = artifact.artifact_type === "MD"
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    openResultsViewer(jobId);
+  });
+  link.textContent = artifactCategory(artifact) === "MD"
     ? translate("artifacts.transcript")
-    : artifact.artifact_type === "VTT"
+    : artifactCategory(artifact) === "VTT"
       ? translate("artifacts.vtt")
       : `${artifact.artifact_type} (${artifact.size_byte} B)`;
   row.appendChild(link);
   return row;
 }
 
-async function openArtifactViewer(url, artifactType) {
+function artifactDisplayName(artifact) {
+  const category = artifactCategory(artifact);
+  const type = String(artifact.artifact_type || "").toUpperCase();
+  if (type === "REVIEWED_TRANSCRIPT_MARKDOWN") return translate("artifacts.transcript");
+  if (type === "AUTOMATIC_TRANSCRIPT_MARKDOWN") return translate("artifacts.transcript_automatic");
+  if (category === "MD") return `${translate("artifacts.transcript_version")} #${artifact.id}`;
+  if (category === "VTT") return translate("artifacts.vtt");
+  return `${artifact.artifact_type} (${artifact.size_byte} B)`;
+}
+
+function artifactDownloadName(artifact) {
+  const category = artifactCategory(artifact);
+  if (category === "VTT") return "saate-subtiitrid.vtt";
+  if (category === "MD") return "transkriptsioon.md";
+  const extension = String(artifact.artifact_type || "json").toLowerCase().split("_").pop() || "json";
+  return `tehniline-fail.${extension}`;
+}
+
+function populateArtifactViewer(artifacts, jobId) {
+  const select = $("#artifactViewerSelect");
+  const ordered = [...artifacts].sort((left, right) => {
+    const rank = (artifact) => {
+      const type = String(artifact.artifact_type || "").toUpperCase();
+      if (type === "REVIEWED_TRANSCRIPT_MARKDOWN") return 0;
+      if (type === "AUTOMATIC_TRANSCRIPT_MARKDOWN") return 1;
+      if (artifactCategory(artifact) === "MD") return 2;
+      if (artifactCategory(artifact) === "VTT") return 3;
+      return 4;
+    };
+    const leftOrder = rank(left);
+    const rightOrder = rank(right);
+    return leftOrder - rightOrder || Number(left.id) - Number(right.id);
+  });
+  select.replaceChildren();
+  ordered.forEach((artifact) => {
+    const option = document.createElement("option");
+    option.value = String(artifact.id);
+    option.textContent = artifactDisplayName(artifact);
+    select.appendChild(option);
+  });
+  select.onchange = () => {
+    const artifact = ordered.find((item) => String(item.id) === select.value);
+    if (artifact) loadArtifactIntoViewer(artifact, jobId);
+  };
+  if (ordered.length) {
+    select.value = String(ordered[0].id);
+    loadArtifactIntoViewer(ordered[0], jobId);
+  }
+}
+
+async function loadArtifactIntoViewer(artifact, jobId) {
   const dialog = $("#artifactViewer");
-  const title = $("#artifactViewerTitle");
   const message = $("#artifactViewerMessage");
   const content = $("#artifactViewerContent");
   const download = $("#artifactViewerDownload");
+  const url = `${API_BASE}/jobs/${jobId}/artifacts/${artifact.id}`;
   download.dataset.url = url;
-  download.dataset.artifactType = artifactType;
-  title.textContent = artifactType === "VTT"
-    ? translate("artifacts.vtt")
-    : translate("artifacts.transcript");
+  download.dataset.artifactType = artifactCategory(artifact);
+  download.dataset.downloadName = artifactDownloadName(artifact);
   message.textContent = translate("artifacts.loading");
   content.textContent = "";
-  dialog.showModal();
   try {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const text = await response.text();
-    if (artifactType === "MD") {
-      content.classList.remove("is-vtt");
+    const category = artifactCategory(artifact);
+    if (category === "MD") {
+      content.classList.remove("is-vtt", "is-raw");
       content.innerHTML = renderMarkdown(text);
     } else {
-      content.classList.add("is-vtt");
-      content.textContent = text;
+      content.classList.add("is-vtt", "is-raw");
+      if (category !== "VTT") {
+        try {
+          content.textContent = JSON.stringify(JSON.parse(text), null, 2);
+        } catch {
+          content.textContent = text;
+        }
+      } else {
+        content.textContent = text;
+      }
     }
+    if (category === "MD") content.classList.remove("is-raw");
     message.textContent = "";
+  } catch (error) {
+    message.textContent = error.message;
+  }
+}
+
+async function openResultsViewer(jobId) {
+  const dialog = $("#artifactViewer");
+  const message = $("#artifactViewerMessage");
+  const content = $("#artifactViewerContent");
+  const select = $("#artifactViewerSelect");
+  select.replaceChildren();
+  content.textContent = "";
+  message.textContent = translate("artifacts.loading");
+  dialog.showModal();
+  try {
+    const artifacts = await request(`/jobs/${jobId}/artifacts`);
+    populateArtifactViewer(artifacts, jobId);
+    message.textContent = artifacts.length ? "" : translate("history.loading_results");
   } catch (error) {
     message.textContent = error.message;
   }
@@ -335,6 +756,12 @@ function renderMarkdown(markdown) {
 $("#errorViewerOk").addEventListener("click", () => $("#errorViewer").close());
 $("#jobInfoClose").addEventListener("click", () => $("#jobInfoViewer").close());
 $("#jobHistoryClose").addEventListener("click", () => $("#jobHistoryViewer").close());
+$("#participantReviewClose").addEventListener("click", () => {
+  destroyParticipantPlayers();
+  $("#participantReviewViewer").close();
+});
+$("#participantReviewSave").addEventListener("click", () => saveParticipantReview());
+$("#participantReviewViewer").addEventListener("close", destroyParticipantPlayers);
 
 $("#artifactViewerClose").addEventListener("click", () => $("#artifactViewer").close());
 $("#artifactViewerDownload").addEventListener("click", async () => {
@@ -343,11 +770,10 @@ $("#artifactViewerDownload").addEventListener("click", async () => {
     const response = await fetch(button.dataset.url);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const blob = await response.blob();
-    const extension = button.dataset.artifactType === "VTT" ? "vtt" : "md";
     const objectUrl = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = objectUrl;
-    anchor.download = button.dataset.artifactType === "VTT" ? "saate-subtiitrid.vtt" : "transkriptsioon.md";
+    anchor.download = button.dataset.downloadName || "tulemus";
     anchor.click();
     URL.revokeObjectURL(objectUrl);
   } catch (error) {
@@ -386,7 +812,10 @@ function renderHistory() {
     status.classList.toggle("is-error", job.status === "CANCELLED");
     status.classList.toggle("is-processing", PROCESSING_STATUSES.has(job.status));
     status.classList.toggle("is-stale", state.staleHistoryJobIds.has(job.id));
-    head.append(title, status);
+    const statusColumn = document.createElement("div");
+    statusColumn.className = "history-status-column";
+    statusColumn.appendChild(status);
+    head.append(title, statusColumn);
     const meta = document.createElement("div");
     meta.className = "history-meta";
     const id = document.createElement("span");
@@ -419,14 +848,19 @@ function renderHistory() {
       button.type = "button";
       button.className = "results-button";
       button.textContent = translate("history.results");
-      button.addEventListener("click", () => loadHistoryArtifacts(job, item));
+      button.addEventListener("click", () => openResultsViewer(job.id));
       actions.appendChild(button);
+    }
+    if (job.status === "WAITING_FOR_PARTICIPANTS") {
+      const participantsButton = document.createElement("button");
+      participantsButton.type = "button";
+      participantsButton.className = "results-button history-participant-action";
+      participantsButton.textContent = translate("history.participants");
+      participantsButton.addEventListener("click", () => showParticipantReview(job.id));
+      actions.appendChild(participantsButton);
     }
     item.appendChild(actions);
     container.appendChild(item);
-    if (["WAITING_FOR_PARTICIPANTS", "IN_REVIEW", "FINISHED"].includes(job.status) && state.openHistoryArtifacts.has(job.id)) {
-      loadHistoryArtifacts(job, item);
-    }
   });
 }
 

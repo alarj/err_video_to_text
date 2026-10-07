@@ -150,19 +150,48 @@ Kasutajal peab olema võimalik:
 - lisada uus osaleja;
 - määrata inimese nimi ja soovi korral roll;
 - märkida kõneleja tundmatuks;
+- salvestada osalejate määramine pooleli ka siis, kui osa
+  `speaker_label`-eid on veel olekus `UNCONFIRMED`;
 - märkida, et ühe `SPEAKER_nn` label'i all on tõenäoliselt mitu inimest.
 
 Kui eri näidiskohad näitavad, et üks Pyannote'i label sisaldab mitut inimest,
-ei kinnitata sellele kogu saate ulatuses üht isikut. Mapping jääb kinnitamata
-ning vastuolulised kohad lähevad ülevaatuskandidaatideks.
+ei kinnitata sellele kogu saate ulatuses üht isikut. Label'i üldmapping
+märgitakse `UNKNOWN` ning vastuolulised kohad lähevad
+ülevaatuskandidaatideks, et nende kõnelejad saaks hiljem segmendipõhiselt
+parandada. Oleku `UNCONFIRMED` jätmine blokeerib õigustatult järgmisse etappi
+liikumise.
 
-Pärast osalejate kinnitamist:
+Esimesel osalise või täieliku määramise salvestamisel:
 
 1. luuakse üks `REVIEWED_DRAFT`, kui seda veel ei ole;
 2. sinna kopeeritakse automaatse drafti segmendid ja kõnelejaseosed;
-3. versioonipõhised anonüümsed label'id seotakse kinnitatud osalejatega;
-4. `WAITING_FOR_PARTICIPANTS` lõpetatakse;
-5. alustatakse `IN_REVIEW` tegevust.
+3. versioonipõhised anonüümsed label'id seotakse kasutaja praeguste
+   valikutega;
+4. sama `REVIEWED_DRAFT` versiooni uuendatakse järgmistel salvestamistel;
+5. `AUTOMATIC_DRAFT` jääb muutmata.
+
+Osaline salvestamine ei lõpeta tegevust `WAITING_FOR_PARTICIPANTS`. Kasutaja
+võib jätta ühe või mitu label'it olekusse `UNCONFIRMED`, sulgeda vaate ning
+jätkata hiljem samast `REVIEWED_DRAFT` versioonist.
+
+Backend lubab protsessi ülevaatusetappi edasi ainult siis, kui iga
+`speaker_label` vastab ühele järgmistest tingimustest:
+
+- `mapping_status = 'CONFIRMED'` ja `participant_id` viitab olemasolevale
+  `participants` kirjele;
+- `mapping_status = 'UNKNOWN'` ja `participant_id IS NULL`.
+
+Oleku `UNCONFIRMED` olemasolu blokeerib edasiliikumise. Sel juhul tagastab API
+kinnitamata label'ite loendi, kuid osaline salvestus ise õnnestub. Seda reeglit
+kontrollib backend; ainult veebiliidese nupu keelamisest ei piisa.
+
+Kui kõik label'id on `CONFIRMED` või `UNKNOWN`, tehakse ühe lühikese
+andmebaasitransaktsiooniga:
+
+1. salvestatakse lõplikud osalejaseosed;
+2. lõpetatakse `WAITING_FOR_PARTICIPANTS` tulemusega `OK`;
+3. luuakse `IN_REVIEW` tegevus;
+4. protsessi olekuks saab `IN_REVIEW`.
 
 Näotuvastust, näoembeddinguid, nägude globaalset registrit ega eri saadete
 vahelist biomeetrilist isikutuvastust MVP2.2-s ei kasutata.
@@ -315,6 +344,19 @@ GET  /jobs/{id}/media
 Täpseid marsruudinimesid võib rakendamisel ühtlustada olemasoleva API-ga, kuid
 vastutus peab jääma samaks.
 
+MVP2.2b osalejate määramise teostuses kasutatakse järgmisi marsruute:
+
+```text
+GET  /participants
+POST /participants
+GET  /jobs/{id}/participant-review
+PUT  /jobs/{id}/participant-review
+```
+
+Osaline `PUT` salvestab sama `REVIEWED_DRAFT` versiooni, kuid ei muuda protsessi
+olekut. `confirm = true` viib protsessi olekusse `IN_REVIEW` ainult siis, kui
+kõik anonüümsed kõnelejad on `CONFIRMED` või `UNKNOWN`.
+
 `GET /review` tagastab vähemalt:
 
 - protsessi, allika ja valitud meedia metadata;
@@ -324,8 +366,8 @@ vastutus peab jääma samaks.
 - ülevaatuskandidaadid, põhjused ja viimase oleku;
 - ülevaatuse edenemise.
 
-`PUT /participants` kinnitab versioonipõhised osalejaseosed ning alustab
-vajaduse korral `REVIEWED_DRAFT` ja `IN_REVIEW` etapi.
+`PUT /jobs/{id}/participant-review` kinnitab versioonipõhised osalejaseosed
+ning alustab vajaduse korral `REVIEWED_DRAFT` ja `IN_REVIEW` etapi.
 
 `PUT /review-draft` salvestab ühe atomaarse tegevusena kandidaadiotsused ning
 nendest tulenevad asendussegmendid. Pikka kasutaja ülevaatust ei hoita avatud
