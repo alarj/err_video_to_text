@@ -59,6 +59,7 @@ class Segment:
 class RunContext:
     source_url: str
     output_dir: str
+    work_key: str | None = None
     time_offset_seconds: float = 0.0
     min_speakers: int | None = None
     max_speakers: int | None = None

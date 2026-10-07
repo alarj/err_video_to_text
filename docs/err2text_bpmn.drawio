@@ -1,0 +1,311 @@
+<mxfile host="app.diagrams.net" agent="Codex">
+  <diagram id="mvp21" name="MVP 2.1 protsess">
+    <mxGraphModel dx="1814" dy="1080" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="lane_user" parent="1" style="swimlane;horizontal=0;startSize=170;html=1;whiteSpace=wrap;rounded=0;" value="Kasutaja / agent" vertex="1">
+          <mxGeometry height="240" width="3990" x="20" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="start" parent="lane_user" style="shape=mxgraph.bpmn.event;eventType=start;html=1;" value="" vertex="1">
+          <mxGeometry height="40" width="40" x="210" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="u1" parent="lane_user" style="shape=mxgraph.bpmn.task;taskType=user;html=1;whiteSpace=wrap;" value="Sisesta URL ja vajuta „Kontrolli“" vertex="1">
+          <mxGeometry height="60" width="190" x="290" y="140" as="geometry" />
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-5" edge="1" parent="lane_user" source="u_err" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="Fd1LIMAFlzk-S5Z8VKxl-4" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="u_err" parent="lane_user" style="shape=mxgraph.bpmn.task;taskType=user;html=1;whiteSpace=wrap;" value="Näita URL-i veateadet" vertex="1">
+          <mxGeometry height="60" width="102.5" x="638.75" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="u2" parent="lane_user" style="shape=mxgraph.bpmn.task;taskType=user;html=1;whiteSpace=wrap;" value="Kinnita töötluse alustamine (vajuta &quot;Alusta&quot;)" vertex="1">
+          <mxGeometry height="60" width="157.5" x="1140" y="135" as="geometry" />
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-9" edge="1" parent="lane_user" source="u3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;exitX=0.526;exitY=0.055;exitDx=0;exitDy=0;exitPerimeter=0;" target="Fd1LIMAFlzk-S5Z8VKxl-8" value="">
+          <mxGeometry relative="1" x="-0.067" as="geometry">
+            <Array as="points">
+              <mxPoint x="1769.9" y="20" />
+              <mxPoint x="3858.8" y="20" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="u3" parent="lane_user" style="shape=mxgraph.bpmn.task;taskType=user;html=1;whiteSpace=wrap;" value="Kuva olemasolev tulemus" vertex="1">
+          <mxGeometry height="60" width="190" x="1670" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="end_old" parent="lane_user" style="shape=mxgraph.bpmn.event;eventType=end;html=1;" value="" vertex="1">
+          <mxGeometry height="40" width="40" x="2400" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="u4" parent="lane_user" style="shape=mxgraph.bpmn.task;taskType=user;html=1;whiteSpace=wrap;" value="Vali: alusta uuesti või lõpeta" vertex="1">
+          <mxGeometry height="60" width="170" x="2335" y="140" as="geometry" />
+        </mxCell>
+        <mxCell id="g4" parent="lane_user" style="shape=mxgraph.bpmn.gateway;gatewayType=exclusive;html=1;whiteSpace=wrap;" value="Alusta uuesti?" vertex="1">
+          <mxGeometry height="60" width="60" x="2120" y="140" as="geometry" />
+        </mxCell>
+        <mxCell id="end_fail" parent="lane_user" style="shape=mxgraph.bpmn.event;eventType=end;html=1;" value="" vertex="1">
+          <mxGeometry height="40" width="40" x="3880" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="u5" parent="lane_user" style="points=[[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0.25,0],[1,0.5,0],[1,0.75,0],[0.75,1,0],[0.5,1,0],[0.25,1,0],[0,0.75,0],[0,0.5,0],[0,0.25,0]];shape=mxgraph.bpmn.task2;whiteSpace=wrap;size=10;html=1;container=1;expand=0;collapsible=0;taskMarker=abstract;isLoopStandard=1;" value="Määra või kinnita osalejad&amp;nbsp;" vertex="1">
+          <mxGeometry height="60" width="170" x="2635" y="140" as="geometry" />
+        </mxCell>
+        <mxCell id="u6" parent="lane_user" style="points=[[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0.25,0],[1,0.5,0],[1,0.75,0],[0.75,1,0],[0.5,1,0],[0.25,1,0],[0,0.75,0],[0,0.5,0],[0,0.25,0]];shape=mxgraph.bpmn.task2;whiteSpace=wrap;size=10;html=1;container=1;expand=0;collapsible=0;taskMarker=abstract;isLoopStandard=1;" value="Vaata üle diarization&#39;i kahtlased kohad" vertex="1">
+          <mxGeometry height="60" width="240" x="3050" y="140" as="geometry" />
+        </mxCell>
+        <mxCell id="end_ok" parent="lane_user" style="shape=mxgraph.bpmn.event;eventType=end;html=1;" value="" vertex="1">
+          <mxGeometry height="40" width="40" x="4750" y="200" as="geometry" />
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-4" parent="lane_user" style="points=[[0.145,0.145,0],[0.5,0,0],[0.855,0.145,0],[1,0.5,0],[0.855,0.855,0],[0.5,1,0],[0.145,0.855,0],[0,0.5,0]];shape=mxgraph.bpmn.event;html=1;verticalLabelPosition=bottom;labelBackgroundColor=#ffffff;verticalAlign=top;align=center;perimeter=ellipsePerimeter;outlineConnect=0;aspect=fixed;outline=throwing;symbol=general;" value="" vertex="1">
+          <mxGeometry height="40" width="40" x="792.5" y="50" as="geometry" />
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-7" edge="1" parent="lane_user" source="Fd1LIMAFlzk-S5Z8VKxl-6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="u1" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-6" parent="lane_user" style="points=[[0.145,0.145,0],[0.5,0,0],[0.855,0.145,0],[1,0.5,0],[0.855,0.855,0],[0.5,1,0],[0.145,0.855,0],[0,0.5,0]];shape=mxgraph.bpmn.event;html=1;verticalLabelPosition=bottom;labelBackgroundColor=#ffffff;verticalAlign=top;align=center;perimeter=ellipsePerimeter;outlineConnect=0;aspect=fixed;outline=standard;symbol=general;" value="" vertex="1">
+          <mxGeometry height="40" width="40" x="205" y="150" as="geometry" />
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-8" parent="lane_user" style="points=[[0.145,0.145,0],[0.5,0,0],[0.855,0.145,0],[1,0.5,0],[0.855,0.855,0],[0.5,1,0],[0.145,0.855,0],[0,0.5,0]];shape=mxgraph.bpmn.event;html=1;verticalLabelPosition=bottom;labelBackgroundColor=#ffffff;verticalAlign=top;align=center;perimeter=ellipsePerimeter;outlineConnect=0;aspect=fixed;outline=throwing;symbol=general;" value="" vertex="1">
+          <mxGeometry height="40" width="40" x="3838.75" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-10" edge="1" parent="lane_user" source="g4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" target="Fd1LIMAFlzk-S5Z8VKxl-8">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-11" connectable="0" parent="Fd1LIMAFlzk-S5Z8VKxl-10" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="Ei" vertex="1">
+          <mxGeometry relative="1" x="0.2479" y="-1" as="geometry">
+            <mxPoint x="-1037" y="39" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-29" edge="1" parent="lane_user" source="Fd1LIMAFlzk-S5Z8VKxl-26" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" target="u2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-26" parent="lane_user" style="whiteSpace=wrap;html=1;" value="Vali digiteeritav meedia" vertex="1">
+          <mxGeometry height="60" width="120" x="980" y="135" as="geometry" />
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-37" edge="1" parent="lane_user" source="Fd1LIMAFlzk-S5Z8VKxl-36" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="Fd1LIMAFlzk-S5Z8VKxl-4" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-36" parent="lane_user" style="shape=mxgraph.bpmn.task;taskType=user;html=1;whiteSpace=wrap;" value="Teade &quot;Meedia puudub&quot;" vertex="1">
+          <mxGeometry height="60" width="145" x="740" y="135" as="geometry" />
+        </mxCell>
+        <mxCell id="lane_api" parent="1" style="swimlane;horizontal=0;startSize=170;html=1;whiteSpace=wrap;rounded=0;" value="ERR2TEXT API / teenus" vertex="1">
+          <mxGeometry height="260" width="3990" x="20" y="260" as="geometry" />
+        </mxCell>
+        <mxCell id="a1" parent="lane_api" style="shape=mxgraph.bpmn.task;taskType=service;html=1;whiteSpace=wrap;" value="Valideeri URL ja too metaandmed / meedia" vertex="1">
+          <mxGeometry height="60" width="190" x="430" y="130" as="geometry" />
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-19" edge="1" parent="lane_api" source="g1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="Fd1LIMAFlzk-S5Z8VKxl-18" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-20" connectable="0" parent="Fd1LIMAFlzk-S5Z8VKxl-19" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="Jah" vertex="1">
+          <mxGeometry relative="1" x="-0.0412" y="-6" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="g1" parent="lane_api" style="shape=mxgraph.bpmn.gateway;gatewayType=exclusive;html=1;whiteSpace=wrap;" value="URL sobib?" vertex="1">
+          <mxGeometry height="60" width="60" x="660" y="130" as="geometry" />
+        </mxCell>
+        <mxCell id="a2" parent="lane_api" style="shape=mxgraph.bpmn.task;taskType=service;html=1;whiteSpace=wrap;" value="Loo andmebaasi kirjed" vertex="1">
+          <mxGeometry height="60" width="145" x="1240" y="70" as="geometry" />
+        </mxCell>
+        <mxCell id="a3" parent="lane_api" style="shape=mxgraph.bpmn.task;taskType=service;html=1;whiteSpace=wrap;" value="Määra tegeliku meedia identiteet" vertex="1">
+          <mxGeometry height="60" width="130" x="1420" y="70" as="geometry" />
+        </mxCell>
+        <mxCell id="g2" parent="lane_api" style="shape=mxgraph.bpmn.gateway;gatewayType=exclusive;html=1;whiteSpace=wrap;" value="Varasem sama dokument olemas?" vertex="1">
+          <mxGeometry height="60" width="60" x="1580" y="70" as="geometry" />
+        </mxCell>
+        <mxCell id="a4" parent="lane_api" style="shape=mxgraph.bpmn.task;taskType=service;html=1;whiteSpace=wrap;" value="Seo olemasoleva tulemusega" vertex="1">
+          <mxGeometry height="60" width="210" x="1660" y="15" as="geometry" />
+        </mxCell>
+        <mxCell id="a5" parent="lane_api" style="shape=mxgraph.bpmn.task;taskType=service;html=1;whiteSpace=wrap;" value="Lisa töö järjekorda" vertex="1">
+          <mxGeometry height="60" width="145" x="1760" y="150" as="geometry" />
+        </mxCell>
+        <mxCell id="a6" parent="lane_api" style="shape=mxgraph.bpmn.task;taskType=service;html=1;whiteSpace=wrap;" value="Märgi töö ebaõnnestunuks" vertex="1">
+          <mxGeometry height="60" width="157.5" x="2341.25" y="130" as="geometry" />
+        </mxCell>
+        <mxCell id="a7" parent="lane_api" style="shape=mxgraph.bpmn.task;taskType=service;html=1;whiteSpace=wrap;" value="Koosta pärisnimedega transkriptsiooni draft" vertex="1">
+          <mxGeometry height="60" width="250" x="2810" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="a8" parent="lane_api" style="shape=mxgraph.bpmn.task;taskType=service;html=1;whiteSpace=wrap;" value="Loo lõplik transkriptsioon" vertex="1">
+          <mxGeometry height="60" width="145" x="3590" y="130" as="geometry" />
+        </mxCell>
+        <mxCell id="g5" parent="lane_api" style="shape=mxgraph.bpmn.gateway;gatewayType=exclusive;html=1;whiteSpace=wrap;" value="Kõik kohad lahendatud?" vertex="1">
+          <mxGeometry height="60" width="60" x="3470" y="130" as="geometry" />
+        </mxCell>
+        <mxCell id="e27" edge="1" parent="lane_api" source="g5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" target="a8" value="jah">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="u7" parent="lane_api" style="shape=mxgraph.bpmn.task;taskType=user;html=1;whiteSpace=wrap;" value="Kuva / väljasta lõplik tulemus" vertex="1">
+          <mxGeometry height="60" width="157.5" x="3780" y="130" as="geometry" />
+        </mxCell>
+        <mxCell id="e28" edge="1" parent="lane_api" source="a8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" target="u7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-34" edge="1" parent="lane_api" source="Fd1LIMAFlzk-S5Z8VKxl-18" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" target="Fd1LIMAFlzk-S5Z8VKxl-21">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-18" parent="lane_api" style="whiteSpace=wrap;html=1;" value="Määra meediate arv" vertex="1">
+          <mxGeometry height="60" width="120" x="765" y="130" as="geometry" />
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-21" parent="lane_api" style="rhombus;whiteSpace=wrap;html=1;shapeInside=1;" value="&lt;div&gt;&lt;br/&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="60" x="880" y="30" as="geometry" />
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-43" parent="lane_api" style="whiteSpace=wrap;html=1;" value="Salvesta otsused ja parandused&amp;nbsp;" vertex="1">
+          <mxGeometry height="60" width="120" x="3310" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="e25" edge="1" parent="lane_api" source="Fd1LIMAFlzk-S5Z8VKxl-43" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" target="g5">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="3450" y="20" as="sourcePoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="lane_worker" parent="1" style="swimlane;horizontal=0;startSize=170;html=1;whiteSpace=wrap;rounded=0;" value="Töötlemisworker" vertex="1">
+          <mxGeometry height="210" width="3990" x="20" y="520" as="geometry" />
+        </mxCell>
+        <mxCell id="w1" parent="lane_worker" style="shape=mxgraph.bpmn.task;taskType=service;html=1;whiteSpace=wrap;" value="Võta järgmine töö" vertex="1">
+          <mxGeometry height="60" width="130" x="1880" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="w2" parent="lane_worker" style="shape=mxgraph.bpmn.task;taskType=service;html=1;whiteSpace=wrap;" value="Laadi meedia alla" vertex="1">
+          <mxGeometry height="60" width="110" x="2060" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="w3" parent="lane_worker" style="shape=mxgraph.bpmn.task;taskType=service;html=1;whiteSpace=wrap;" value="Käivita diariseerimine" vertex="1">
+          <mxGeometry height="60" width="120" x="2220" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="g3" parent="lane_worker" style="shape=mxgraph.bpmn.gateway;gatewayType=exclusive;html=1;whiteSpace=wrap;" value="Diariseerimine õnnestus?" vertex="1">
+          <mxGeometry height="60" width="60" x="2390" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-41" edge="1" parent="lane_worker" source="Fd1LIMAFlzk-S5Z8VKxl-38" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="Fd1LIMAFlzk-S5Z8VKxl-40" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-38" parent="lane_worker" style="shape=mxgraph.bpmn.task;taskType=service;html=1;whiteSpace=wrap;" value="Liida diariseerimise tulemus ja VTT" vertex="1">
+          <mxGeometry height="60" width="120" x="2500" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="e22" edge="1" parent="lane_worker" source="g3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;entryX=-0.001;entryY=0.506;entryDx=0;entryDy=0;entryPerimeter=0;" target="Fd1LIMAFlzk-S5Z8VKxl-38" value="jah">
+          <mxGeometry relative="1" x="-0.0324" as="geometry">
+            <mxPoint as="offset" />
+            <mxPoint x="2510" y="90" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-40" parent="lane_worker" style="whiteSpace=wrap;html=1;" value="Leia ja märgi kahtlased kohad" vertex="1">
+          <mxGeometry height="60" width="120" x="2660" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" edge="1" parent="1" source="u1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;exitX=1.004;exitY=0.527;exitDx=0;exitDy=0;exitPerimeter=0;" target="a1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" edge="1" parent="1" source="a1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" target="g1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" edge="1" parent="1" source="g1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#c62828;" target="u_err" value="ei">
+          <mxGeometry relative="1" x="-0.6782" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e6" edge="1" parent="1" source="u2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;exitX=1.014;exitY=0.499;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.694;entryY=0.045;entryDx=0;entryDy=0;entryPerimeter=0;" target="a2">
+          <mxGeometry relative="1" x="-0.2132" as="geometry">
+            <Array as="points">
+              <mxPoint x="1360" y="184.9" />
+              <mxPoint x="1360" y="320" />
+            </Array>
+            <mxPoint x="1340" y="320" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e7" edge="1" parent="1" source="a2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" target="a3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" edge="1" parent="1" source="a3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" target="g2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" edge="1" parent="1" source="g2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;exitX=0.5;exitY=0;exitDx=0;exitDy=0;exitPerimeter=0;" target="a4" value="jah">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" edge="1" parent="1" source="a4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" target="u3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e12" edge="1" parent="1" source="g2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;" target="a5" value="ei">
+          <mxGeometry relative="1" x="-0.1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1630" y="440" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e13" edge="1" parent="1" source="a5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;exitX=1.002;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;" target="w1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e14" edge="1" parent="1" source="w1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" target="w2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e15" edge="1" parent="1" source="w2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" target="w3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e16" edge="1" parent="1" source="w3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" target="g3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e17" edge="1" parent="1" source="g3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#c62828;" target="a6" value="ei">
+          <mxGeometry relative="1" x="-0.5385" y="-10" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e18" edge="1" parent="1" source="a6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#c62828;" target="u4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e19" edge="1" parent="1" source="u4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" target="g4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e21" edge="1" parent="1" source="g4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;entryX=0.866;entryY=-0.008;entryDx=0;entryDy=0;entryPerimeter=0;" target="a5" value="jah — järjekorda tagasi">
+          <mxGeometry relative="1" x="-0.597" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e23" edge="1" parent="1" source="u5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;exitX=1;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;" target="a7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e24" edge="1" parent="1" source="a7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;entryX=0.25;entryY=1;entryDx=0;entryDy=0;entryPerimeter=0;exitX=1.004;exitY=0.561;exitDx=0;exitDy=0;exitPerimeter=0;" target="u6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e26" edge="1" parent="1" source="g5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#c62828;entryX=0.75;entryY=1;entryDx=0;entryDy=0;entryPerimeter=0;" target="u6" value="ei">
+          <mxGeometry relative="1" x="-0.4286" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-14" edge="1" parent="1" source="u7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=1;entryDx=0;entryDy=0;entryPerimeter=0;" target="Fd1LIMAFlzk-S5Z8VKxl-8" value="">
+          <mxGeometry relative="1" x="-0.6957" as="geometry">
+            <mxPoint x="3880" y="240" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-24" edge="1" parent="1" source="Fd1LIMAFlzk-S5Z8VKxl-21" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.474;entryY=0.954;entryDx=0;entryDy=0;entryPerimeter=0;" target="u2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-25" connectable="0" parent="Fd1LIMAFlzk-S5Z8VKxl-24" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="1" vertex="1">
+          <mxGeometry relative="1" x="-0.7643" y="1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-27" edge="1" parent="1" source="Fd1LIMAFlzk-S5Z8VKxl-21" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="Fd1LIMAFlzk-S5Z8VKxl-26" value="">
+          <mxGeometry relative="1" x="-0.3017" as="geometry">
+            <Array as="points">
+              <mxPoint x="930" y="185" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-28" connectable="0" parent="Fd1LIMAFlzk-S5Z8VKxl-27" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="mitu" vertex="1">
+          <mxGeometry relative="1" x="-0.5322" y="-3" as="geometry">
+            <mxPoint x="-19" y="32" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-31" edge="1" parent="1" source="Fd1LIMAFlzk-S5Z8VKxl-21" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0.514;entryY=1.017;entryDx=0;entryDy=0;entryPerimeter=0;" target="Fd1LIMAFlzk-S5Z8VKxl-36">
+          <mxGeometry relative="1" x="0.6632" as="geometry">
+            <mxPoint x="820" y="210" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-35" connectable="0" parent="Fd1LIMAFlzk-S5Z8VKxl-31" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="0" vertex="1">
+          <mxGeometry relative="1" x="0.2947" as="geometry">
+            <mxPoint x="30" y="43" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-42" edge="1" parent="1" source="Fd1LIMAFlzk-S5Z8VKxl-40" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;entryPerimeter=0;" target="u5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Fd1LIMAFlzk-S5Z8VKxl-44" edge="1" parent="1" source="u6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="Fd1LIMAFlzk-S5Z8VKxl-43" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

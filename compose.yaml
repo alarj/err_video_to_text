@@ -1,4 +1,51 @@
 services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+      args:
+        UGLYERR_REF: ${UGLYERR_REF:?Set an audited UglyERR commit SHA in .env}
+        YTDLP_VERSION: ${YTDLP_VERSION:?Set YTDLP_VERSION in .env}
+    env_file: .env
+    environment:
+      ERR2TEXT_RUNTIME_ROOT: ${ERR2TEXT_CONTAINER_RUNTIME_ROOT:?Set ERR2TEXT_CONTAINER_RUNTIME_ROOT in .env}
+    volumes:
+      - ${ERR2TEXT_RUNTIME_ROOT:?Set ERR2TEXT_RUNTIME_ROOT in .env}:${ERR2TEXT_CONTAINER_RUNTIME_ROOT:?Set ERR2TEXT_CONTAINER_RUNTIME_ROOT in .env}
+      - ${ORACLE_CONFIG_DIR:?Set ORACLE_CONFIG_DIR in .env}:${ORACLE_CONFIG_DIR:?Set ORACLE_CONFIG_DIR in .env}:ro
+    expose:
+      - "8000"
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    networks:
+      default: {}
+      funo_net:
+        aliases:
+          - err2text-api
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        UGLYERR_REF: ${UGLYERR_REF:?Set an audited UglyERR commit SHA in .env}
+        YTDLP_VERSION: ${YTDLP_VERSION:?Set YTDLP_VERSION in .env}
+    env_file: .env
+    environment:
+      ERR2TEXT_RUNTIME_ROOT: ${ERR2TEXT_CONTAINER_RUNTIME_ROOT:?Set ERR2TEXT_CONTAINER_RUNTIME_ROOT in .env}
+      ERR2TEXT_PYTORCH_THREADS: ${ERR2TEXT_PYTORCH_THREADS:?Set ERR2TEXT_PYTORCH_THREADS in .env}
+      HOME: ${ERR2TEXT_HOME:?Set ERR2TEXT_HOME in .env}
+      USER: ${ERR2TEXT_USER:?Set ERR2TEXT_USER in .env}
+      LOGNAME: ${ERR2TEXT_LOGNAME:?Set ERR2TEXT_LOGNAME in .env}
+      HF_HOME: ${ERR2TEXT_HF_HOME:?Set ERR2TEXT_HF_HOME in .env}
+      HF_HUB_CACHE: ${ERR2TEXT_HF_HUB_CACHE:?Set ERR2TEXT_HF_HUB_CACHE in .env}
+      XDG_CACHE_HOME: ${ERR2TEXT_XDG_CACHE_HOME:?Set ERR2TEXT_XDG_CACHE_HOME in .env}
+      TORCHINDUCTOR_CACHE_DIR: ${ERR2TEXT_TORCHINDUCTOR_CACHE_DIR:?Set ERR2TEXT_TORCHINDUCTOR_CACHE_DIR in .env}
+    volumes:
+      - ${ERR2TEXT_RUNTIME_ROOT:?Set ERR2TEXT_RUNTIME_ROOT in .env}:${ERR2TEXT_CONTAINER_RUNTIME_ROOT:?Set ERR2TEXT_CONTAINER_RUNTIME_ROOT in .env}
+      - ${ORACLE_CONFIG_DIR:?Set ORACLE_CONFIG_DIR in .env}:${ORACLE_CONFIG_DIR:?Set ORACLE_CONFIG_DIR in .env}:ro
+    user: "${ERR2TEXT_UID:?Set ERR2TEXT_UID in .env}:${ERR2TEXT_GID:?Set ERR2TEXT_GID in .env}"
+    cpus: ${ERR2TEXT_WORKER_CPUS:?Set ERR2TEXT_WORKER_CPUS in .env}
+    entrypoint: ["python", "backend/worker.py"]
+
   err2text:
     build:
       context: .
@@ -70,3 +117,7 @@ services:
     user: "${ERR2TEXT_UID:?Set ERR2TEXT_UID in .env}:${ERR2TEXT_GID:?Set ERR2TEXT_GID in .env}"
     cpus: ${ERR2TEXT_WORKER_CPUS:?Set ERR2TEXT_WORKER_CPUS in .env}
     command: ["alignment-review", "--help"]
+
+networks:
+  funo_net:
+    external: true

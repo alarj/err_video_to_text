@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="et">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="./assets/app.css?v=10" />
+    <title>ERR2TEXT</title>
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="site-header">
+        <p class="eyebrow" data-i18n="app.eyebrow"></p>
+        <h1 data-i18n="app.title"></h1>
+        <p class="lead" data-i18n="app.lead"></p>
+      </header>
+
+      <section class="card" aria-labelledby="source-title">
+        <h2 id="source-title" data-i18n="source.title"></h2>
+        <form id="resolveForm" novalidate>
+          <label for="sourceUrl" data-i18n="source.url_label"></label>
+          <div class="form-row">
+            <div class="input-with-clear">
+              <input id="sourceUrl" name="url" type="url" required autocomplete="url" data-i18n-placeholder="source.url_placeholder" />
+              <button id="clearUrlButton" class="clear-button" type="button" data-i18n-aria-label="source.clear_url" data-i18n-title="source.clear_url">×</button>
+            </div>
+            <button id="resolveButton" type="submit" data-i18n="source.resolve_button"></button>
+          </div>
+        </form>
+        <div id="resolveMessage" class="message" role="status" aria-live="polite"></div>
+      </section>
+
+      <section id="metadataCard" class="card hidden" aria-labelledby="metadata-title">
+        <h2 id="metadata-title" data-i18n="metadata.title"></h2>
+        <dl class="metadata-grid">
+          <div><dt data-i18n="metadata.title_label"></dt><dd id="metadataTitle">-</dd></div>
+          <div><dt data-i18n="metadata.published_label"></dt><dd id="metadataPublished">-</dd></div>
+          <div class="wide"><dt data-i18n="metadata.description_label"></dt><dd id="metadataDescription">-</dd></div>
+        </dl>
+      </section>
+
+      <section id="mediaCard" class="card hidden" aria-labelledby="media-title">
+        <h2 id="media-title" data-i18n="media.title"></h2>
+        <p class="muted" data-i18n="media.help"></p>
+        <form id="jobForm">
+          <div id="mediaChoices" class="media-choices"></div>
+          <div class="media-actions">
+            <button id="createJobButton" type="submit" data-i18n="media.start_button"></button>
+            <button id="cancelMediaButton" class="secondary-button" type="button" data-i18n="media.cancel_button"></button>
+          </div>
+        </form>
+        <div id="jobMessage" class="message" role="status" aria-live="polite"></div>
+      </section>
+
+      <section id="jobCard" class="card hidden" aria-labelledby="job-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow" data-i18n="job.eyebrow"></p>
+            <h2 id="job-title"><span data-i18n="job.title"></span> <span id="jobId"></span></h2>
+          </div>
+          <span id="jobStatus" class="status-badge"></span>
+        </div>
+        <dl class="metadata-grid compact">
+          <div><dt data-i18n="job.submitted_label"></dt><dd id="jobSubmitted">-</dd></div>
+          <div><dt data-i18n="job.updated_label"></dt><dd id="jobUpdated">-</dd></div>
+        </dl>
+        <div id="jobError" class="message error hidden" role="alert"></div>
+        <div class="progress-note" id="jobProgressNote" data-i18n="job.waiting"></div>
+        <div id="eventList" class="event-list"></div>
+        <div id="artifactList" class="artifact-list hidden"></div>
+      </section>
+
+      <section id="historyCard" class="card" aria-label="" data-i18n-aria-label="history.aria_label">
+        <div class="section-heading">
+          <div></div>
+          <button id="historyRefreshButton" class="secondary-button" type="button" data-i18n="history.refresh"></button>
+        </div>
+        <div id="diarizationNotice" class="diarization-notice hidden" role="status" aria-live="polite"></div>
+        <div id="historyMessage" class="message" role="status" aria-live="polite"></div>
+        <div id="historyList" class="history-list"></div>
+      </section>
+
+      <footer class="site-footer" data-i18n="app.footer"></footer>
+    </main>
+    <dialog id="artifactViewer" class="artifact-viewer" aria-modal="true">
+      <div class="artifact-viewer-head">
+        <h2 id="artifactViewerTitle"></h2>
+        <div class="artifact-viewer-actions">
+          <button id="artifactViewerDownload" class="secondary-button" type="button" data-i18n="artifacts.download"></button>
+          <button id="artifactViewerClose" class="secondary-button" type="button" data-i18n="artifacts.close"></button>
+        </div>
+      </div>
+      <div id="artifactViewerMessage" class="message" role="status" aria-live="polite"></div>
+      <div id="artifactViewerContent" class="artifact-viewer-content"></div>
+    </dialog>
+    <dialog id="errorViewer" class="error-viewer" aria-modal="true">
+      <h2 data-i18n="errors.title"></h2>
+      <p id="errorViewerMessage"></p>
+      <div class="error-viewer-actions">
+        <button id="errorViewerOk" class="secondary-button" type="button" data-i18n="errors.ok"></button>
+      </div>
+    </dialog>
+    <dialog id="jobInfoViewer" class="job-viewer" aria-modal="true">
+      <div class="job-viewer-head"><h2 data-i18n="history.info_title"></h2><button id="jobInfoClose" class="secondary-button" type="button" data-i18n="artifacts.close"></button></div>
+      <div id="jobInfoContent" class="job-info-content"></div>
+    </dialog>
+    <dialog id="jobHistoryViewer" class="job-viewer" aria-modal="true">
+      <div class="job-viewer-head"><h2 data-i18n="history.processing_title"></h2><button id="jobHistoryClose" class="secondary-button" type="button" data-i18n="artifacts.close"></button></div>
+      <div id="jobHistoryContent" class="job-history-content"></div>
+    </dialog>
+    <script src="./assets/app.js?v=26" defer></script>
+  </body>
+</html>

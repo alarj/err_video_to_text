@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 dependencies = []
 
 [project.optional-dependencies]
+api = ["fastapi>=0.115", "uvicorn[standard]>=0.30", "oracledb>=2.5", "python-dotenv>=1.0"]
 media = ["yt-dlp>=2025.1.15"]
 diarization = ["pyannote.audio>=3.3"]
 whisper-review = ["faster-whisper==1.2.1"]

@@ -1,5 +1,8 @@
 # ERR2TEXT MVP1.3
 
+Projekti tööreeglid ja tõeallikate register on dokumendis
+[`docs/agents.md`](docs/agents.md).
+
 Containeris töötav CLI, mis seob ERR-i olemasoleva VTT teksti audio-põhise
 kõnelejate diarization'iga. MVP1 ei tee uut automaatset kõnetuvastust ega
 automaatselt hääle järgi inimeste nimede määramist. MVP1.2 lisab eraldi
@@ -80,7 +83,7 @@ Esimese image'i ehituse ja esimese review-jooksu teeb projekti kasutaja.
 ## MVP1.3: VTT forced-alignmenti katse
 
 Whisperi katse järeldus on dokumenteeritud failis
-[`lessons_learned.md`](lessons_learned.md): uus ASR-tekst ei kontrolli
+[`docs/lessons_learned.md`](docs/lessons_learned.md): uus ASR-tekst ei kontrolli
 Pyannote'i speaker-piiri sõltumatult. Seetõttu joondab `alignment-review`
 muutmata ERR-i VTT sõnad otse audioga ning seob iga sõna olemasoleva
 Pyannote'i ajavahemikuga. See on ainult inimese kontrollmaterjal ega muuda

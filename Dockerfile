@@ -15,7 +15,10 @@ RUN test -n "$UGLYERR_REF" \
     && pip install --no-cache-dir "yt-dlp==${YTDLP_VERSION}" "pyannote.audio>=3.3" \
     && pip install --no-cache-dir "git+https://github.com/smarbaa/yt-dlp-ugly-err.git@${UGLYERR_REF}"
 COPY src ./src
+COPY backend ./backend
 RUN pip install --no-cache-dir --no-deps .
+RUN pip install --no-cache-dir "oracledb>=2.5" "python-dotenv>=1.0"
 
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app/backend:/app/src
 ENTRYPOINT ["python", "process.py"]
