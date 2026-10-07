@@ -74,6 +74,7 @@
   "status.QUEUED": "Järjekord",
   "status.DOWNLOADING": "Meedia hankimine",
   "status.DIARIZING": "Kõnelejate eristamine",
+  "status.MATERIALIZING_AUTOMATIC_DRAFT": "Automaatse drafti koostamine",
   "status.MERGING": "Transkriptsiooni koostamine",
   "status.WAITING_FOR_PARTICIPANTS": "Osalejate määramine",
   "status.IN_REVIEW": "Ülevaatus",

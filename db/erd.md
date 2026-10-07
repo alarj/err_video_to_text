@@ -20,6 +20,7 @@ erDiagram
     TRANSCRIPT_VERSIONS ||--o{ TRANSCRIPT_PARTICIPANTS : contains
     PARTICIPANTS ||--o{ TRANSCRIPT_PARTICIPANTS : identifies
     TRANSCRIPT_VERSIONS ||--o{ TRANSCRIPT_SEGMENTS : contains
+    TRANSCRIPT_SEGMENTS ||--o{ TRANSCRIPT_SEGMENTS : source_segment
     TRANSCRIPT_SEGMENTS ||--o{ TRANSCRIPT_SEGMENT_SPEAKERS : has
     TRANSCRIPT_PARTICIPANTS ||--o{ TRANSCRIPT_SEGMENT_SPEAKERS : assigned
     TRANSCRIPT_SEGMENTS ||--o{ REVIEW_CANDIDATES : flagged
@@ -119,6 +120,8 @@ erDiagram
         NUMBER start_second
         NUMBER end_second
         VARCHAR2 text
+        VARCHAR2 segment_type
+        NUMBER source_segment_id FK
     }
     TRANSCRIPT_SEGMENT_SPEAKERS {
         NUMBER id PK
@@ -147,6 +150,8 @@ erDiagram
   BPMN-i lõpusündmuseni jõudmisel.
 - Aktiivse protsessi `status` on parajasti lõpetamata tegevuse
   `activity_type`. Lõppenud protsessi staatus on `FINISHED` või `CANCELLED`.
+- MVP2.2 protsessi lubatud aktiivne olek sisaldab ka
+  `MATERIALIZING_AUTOMATIC_DRAFT`.
 - Tegevusel ei ole muutuvat staatust. Tegevusel on algus, lõpp ja tulemus.
 - Tegevuse `result` tekib ainult koos `finished_at` väärtusega. Lubatud
   tulemused on `OK`, `ERROR` ja `CANCELLED`. Pooleli tegevusel on mõlemad
@@ -175,6 +180,14 @@ tegevuse puhul `NULL`.
 `activities` peab sisaldama unikaalsust `(process_id, id)` ning võõrvõti
 `(process_id, previous_activity_id)` peab viitama sama tabeli samale
 `process_id` väärtusele. Tegevus ei tohi viidata teise protsessi tegevusele.
+
+`transcript_segments.segment_type` väärtus on `SPEECH` või `SYSTEM_NOTICE`.
+`source_segment_id` viitab algse automaatse drafti segmendile, kui segment on
+sellest tuletatud; algse segmendi puhul on väärtus `NULL`.
+
+MVP2.2 tegevuste lubatud tüübid on `DOWNLOADING`, `DIARIZING`,
+`MATERIALIZING_AUTOMATIC_DRAFT`, `WAITING_FOR_PARTICIPANTS`, `IN_REVIEW` ja
+`WAITING_FOR_RESULT`.
 
 ## Seotud protsesside tehniline reegel
 
@@ -231,3 +244,6 @@ UNKNOWN
 
 Erandina võib `transcript_participants.participant_id` olla `NULL`, kuni
 kasutaja kinnitab päris inimese või märgib kõneleja tundmatuks.
+
+`transcript_participants.role` võib samuti olla `NULL`, kuni kasutaja on
+osalise rolli määranud.

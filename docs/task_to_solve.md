@@ -367,26 +367,13 @@ protsessi. See on tehniline reegel BPMN-i kõrval, mitte uus põhivoog.
 
 ### MVP2.2 — kõnelejapiiride kasutaja–süsteemi ülevaatus
 
-MVP2.2 jätkab MVP1.3 poolituste probleemi veebiliideses. Eesmärk ei ole lasta süsteemil vaikimisi muuta transkriptsiooni, vaid teha inimese ja süsteemi tööjaotus läbipaistvaks ning salvestada kontrollitav otsus.
+MVP2.2 jätkab MVP1.3 kõnelejapiiride probleemi veebiliideses ning lisab
+osalejate määramise, süsteemi leitud kandidaatide kontrollimise,
+`SYSTEM_NOTICE` ekraanitekstide käsitlemise ja parandatud lõppversiooni loomise.
 
-Skoobis on:
-
-- süsteemi poolt leitud kahtlaste cue’de ja võimalike speaker-piiride esitamine koos põhjusega (näiteks cue-sisene Pyannote'i üleminek, madal omistuskindlus või review-katse tulemus);
-- samas vaates originaal-VTT tekst, praegune speaker-silt, Pyannote'i ajavahemikud, võimalik tehniline kandidaat ja link/taasesitus algsele ERR-i meediale;
-- kasutaja otsus: kinnita süsteemi pakutud poolitus, lükka see tagasi, märgi speaker/piir käsitsi või jäta `needs_review` olekusse;
-- kasutaja viimase kinnituse või paranduse salvestamine vastava ülevaatuskandidaadi juurde; eraldi ülevaatusotsuste versiooniajalugu ei looda;
-- kasutaja otsusest tuletatud inimesele loetav parandatud transkriptsioon ning masinloetav ülekatte-/parandusfail; `original.vtt`, algne `speakers.json` ja automaatne põhi-`transcript.json` säilivad muutmata.
-
-MVP2.2 ei õpeta veel automaatselt uusi Pyannote'i või speaker-embeddingu mudeleid kasutaja otsustest ega kasuta neid otsuseid vaikiva automaatparandusena. Eesmärk on esmalt koguda veebis mugavalt tehtud kinnitused ja parandused, mille põhjal saab hiljem mõõta, kas lauselõpu-reegel, forced alignment või speaker-embedding annab päriselt lisaväärtust. Ühte transkriptsiooni töötleb korraga üks kasutaja; mitme kasutaja samaaegne muutmine ja konfliktihaldus ei kuulu MVP2.2 skoopi.
-
-MVP2.2 transkriptsiooniversioonide tööpõhimõte on järgmine:
-
-- `AUTOMATIC_DRAFT` on muutumatu automaatselt loodud transkriptsioon;
-- `REVIEWED_DRAFT` on ühe kasutaja jooksvalt salvestatav tööversioon, mida veebiliidese tegevus „Salvesta muudatused” uuendab;
-- `review_candidates` hoiab iga kahtlase koha viimast olekut ja kasutaja viimast otsust, näiteks `PENDING`, `ACCEPTED`, `REJECTED` või `MODIFIED`; eraldi otsuste ajalugu ei looda;
-- parandatud tekst, poolitus ja kõnelejaseosed salvestatakse `REVIEWED_DRAFT` transkriptsioonisegmentidesse ja nende kõnelejaseostesse, mitte eraldi kohustuslike ajapiiriväljadena ülevaatuskandidaadi kirjesse;
-- kui kõik nõutud kandidaadid on käsitletud, luuakse `REVIEWED_DRAFT` põhjal muutumatu `FINAL` versioon;
-- `original.vtt`, algne `speakers.json`, `AUTOMATIC_DRAFT` ja varasem `FINAL` versioon säilivad muutmata.
+MVP2.2 detailne ja autoriteetne lähteülesanne asub dokumendis
+[`MVP2.2.md`](MVP2.2.md). Nõudeid ei dubleerita siia, et etapi kirjeldus oleks
+ühes kohas.
 
 ### MVP3 — säilitatud korpus ja RAG
 

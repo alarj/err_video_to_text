@@ -59,6 +59,38 @@ def run_review(output_dir: Path, case_file: Path) -> Path:
     return review_dir
 
 
+def find_candidates(transcript: dict[str, object], speakers: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Return production review candidates from the model-free baseline.
+
+    Human case annotations are intentionally not accepted here. They are
+    evaluation input, never prediction input.
+    """
+    result: list[dict[str, object]] = []
+    spans = sorted(_items(speakers), key=lambda item: (float(item["start"]), float(item["end"])))
+    for segment in _items(transcript.get("segments")):
+        if _is_system_notice(str(segment.get("text") or "")):
+            continue
+        prediction = _prediction(segment, spans)
+        if prediction.get("status") != "candidate":
+            continue
+        result.append({
+            "segment_ids": [str(segment["id"])],
+            "start": float(segment["start"]),
+            "end": float(segment["end"]),
+            "candidate_type": "SPEAKER_BOUNDARY",
+            "reason": "model_free_sentence_boundary_baseline",
+            "details": prediction,
+        })
+    return result
+
+
+def _is_system_notice(text: str) -> bool:
+    return " ".join(text.split()) in {
+        "Järgnevale saatele kuvatakse automaatsubtiitrid.",
+        "Teksti automaatsel tuvastamisel võib esineda ebatäpsusi.",
+    }
+
+
 def _review_case(case: dict[str, object], by_id: dict[str, dict[str, object]], spans: list[dict[str, object]]) -> dict[str, object]:
     if case.get("verdict") == "clean_transition":
         probes = [_prediction(by_id[str(case[key])], spans) for key in ("before_segment_id", "after_segment_id")]
