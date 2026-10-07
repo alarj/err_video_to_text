@@ -1181,7 +1181,7 @@ def _regenerate_reviewed_artifacts(process_id: int, version_id: int | None = Non
 
             cursor.execute(
                 """SELECT s.id, s.segment_number, s.start_second, s.end_second, s.text, s.segment_type,
-                          tp.speaker_label, p.name
+                          tp.speaker_label, p.name, ss.start_second, ss.end_second, ss.confidence
                      FROM transcript_segments s
                      LEFT JOIN transcript_segment_speakers ss
                        ON ss.transcript_segment_id = s.id AND ss.end_date IS NULL
@@ -1196,7 +1196,7 @@ def _regenerate_reviewed_artifacts(process_id: int, version_id: int | None = Non
             rows = cursor.fetchall()
             segments = []
             current = None
-            for segment_id, number, start, end, text_value, segment_type, label, name in rows:
+            for segment_id, number, start, end, text_value, segment_type, label, name, speaker_start, speaker_end, confidence in rows:
                 if current is None or int(segment_id) != current["id"]:
                     current = {"id": int(segment_id), "segment_number": int(number),
                                "start_second": float(start), "end_second": float(end),
@@ -1204,16 +1204,33 @@ def _regenerate_reviewed_artifacts(process_id: int, version_id: int | None = Non
                     segments.append(current)
                 if label is not None:
                     current["speakers"].append({"speaker_label": label,
-                                                "participant_name": name})
+                                                "participant_name": name,
+                                                "start_second": float(speaker_start),
+                                                "end_second": float(speaker_end),
+                                                "confidence": float(confidence)})
+
+            for segment in segments:
+                totals: dict[tuple[object, object], float] = {}
+                for speaker in segment["speakers"]:
+                    key = (speaker.get("speaker_label"), speaker.get("participant_name"))
+                    totals[key] = totals.get(key, 0.0) + max(
+                        0.0, float(speaker["end_second"]) - float(speaker["start_second"])
+                    )
+                dominant = max(totals.items(), key=lambda item: item[1], default=None)
+                segment["dominant_speaker"] = (
+                    {"speaker_label": dominant[0][0], "participant_name": dominant[0][1],
+                     "duration_second": dominant[1]}
+                    if dominant is not None else None
+                )
 
             lines = ["# Transkriptsioon", ""]
             for segment in segments:
                 timestamp = _format_transcript_time(segment["start_second"])
                 if segment["segment_type"] == "SYSTEM_NOTICE":
-                    lines.append(f"*Ekraaniteade ({timestamp}): {segment['text']}")
+                    lines.append(f"*Ekraaniteade ({timestamp}): {segment['text']}*")
                 else:
-                    speaker = next((s["participant_name"] or s["speaker_label"]
-                                    for s in segment["speakers"]), None)
+                    dominant = segment.get("dominant_speaker") or {}
+                    speaker = dominant.get("participant_name") or dominant.get("speaker_label")
                     prefix = f"**{speaker}** " if speaker else ""
                     lines.append(f"*{timestamp}* {prefix}{segment['text']}")
                 lines.append("")
