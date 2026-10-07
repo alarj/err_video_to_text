@@ -5,6 +5,7 @@ import mimetypes
 import os
 import sys
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -17,155 +18,273 @@ from app.database.oracle import connection  # noqa: E402
 from app.services.resolver import resolve  # noqa: E402
 from err2text.config import ensure_external_output, settings  # noqa: E402
 from err2text.models import RunContext  # noqa: E402
-from err2text.pipeline import process  # noqa: E402
+from err2text.pipeline import complete_diarization, prepare_media, resume_prepared  # noqa: E402
 
 
-def claim_next_job() -> dict[str, object] | None:
+EXECUTABLE_ACTIVITIES = ("DOWNLOADING", "DIARIZING")
+TERMINAL_PROCESS_STATUSES = ("FINISHED", "CANCELLED")
+
+
+def max_workers() -> int:
+    return max(1, int(os.getenv("ERR2TEXT_MAX_CONCURRENT_DIARIZATIONS", "1")))
+
+
+def claim_next_activity(activity_type: str) -> dict[str, object] | None:
+    if activity_type not in EXECUTABLE_ACTIVITIES:
+        raise ValueError(f"Unsupported activity type: {activity_type}")
     with connection() as conn:
         cursor = conn.cursor()
-        queued_id = _status_id(cursor, "QUEUED")
-        downloading_id = _status_id(cursor, "DOWNLOADING")
-        cursor.execute("""SELECT id, submitted_url, media_item_id
-                          FROM jobs
-                          WHERE job_status_id = :queued_id AND end_date IS NULL
-                          ORDER BY created, id
-                          FETCH FIRST 1 ROWS ONLY
-                          FOR UPDATE SKIP LOCKED""", {"queued_id": queued_id})
+        cursor.execute(
+            """SELECT a.id, a.process_id, a.activity_type, s.url, m.canonical_url
+                 FROM activities a
+                 JOIN processes p ON p.id = a.process_id
+                 JOIN sources s ON s.id = p.source_id
+                 JOIN media_items m ON m.id = p.media_item_id
+                WHERE a.activity_type = :activity_type
+                  AND a.finished_at IS NULL
+                  AND a.execution_started_at IS NULL
+                  AND p.finished_at IS NULL
+                  AND p.status NOT IN ('FINISHED', 'CANCELLED')
+                  AND a.end_date IS NULL AND p.end_date IS NULL
+                  AND s.end_date IS NULL AND m.end_date IS NULL
+                ORDER BY a.started_at, a.id
+                FETCH FIRST 1 ROWS ONLY
+                FOR UPDATE SKIP LOCKED"""
+            , {"activity_type": activity_type}
+        )
         row = cursor.fetchone()
         if row is None:
             conn.rollback()
             return None
-        cursor.execute("UPDATE jobs SET job_status_id = :status_id WHERE id = :job_id",
-                       {"status_id": downloading_id, "job_id": int(row[0])})
-        _event(cursor, int(row[0]), downloading_id, "WORK_STARTED", "Worker võttis töö järjekorrast.")
+        cursor.execute(
+            "UPDATE activities SET execution_started_at = SYSTIMESTAMP WHERE id = :activity_id",
+            {"activity_id": int(row[0])},
+        )
         conn.commit()
-        return {"id": int(row[0]), "source_url": str(row[1]), "media_item_id": int(row[2])}
+        return {
+            "activity_id": int(row[0]),
+            "process_id": int(row[1]),
+            "activity_type": str(row[2]),
+            "source_url": str(row[3]),
+            "media_url": str(row[4]),
+        }
 
 
-def process_one() -> bool:
-    job = claim_next_job()
-    if job is None:
-        return False
-    job_id = int(job["id"])
-    run_id = None
+def process_one(activity: dict[str, object]) -> None:
+    process_id = int(activity["process_id"])
+    activity_id = int(activity["activity_id"])
     try:
-        with connection() as conn:
-            cursor = conn.cursor()
-            started_id = _status_id(cursor, "DIARIZING")
-            run_var = cursor.var(int)
-            cursor.execute("""INSERT INTO runs
-                (origin_job_id, media_item_id, status, attempt_number, input_fingerprint, started_at)
-                VALUES (:job_id, :media_id, 'STARTED',
-                        (SELECT COUNT(*) + 1 FROM runs WHERE origin_job_id = :job_id),
-                        :fingerprint, SYSTIMESTAMP)
-                RETURNING id INTO :run_id""",
-                {"job_id": job_id, "media_id": int(job["media_item_id"]),
-                 "fingerprint": hashlib.sha256(str(job["source_url"]).encode()).hexdigest(),
-                 "run_id": run_var})
-            run_id = int(run_var.getvalue()[0])
-            cursor.execute("UPDATE jobs SET job_status_id = :status_id WHERE id = :job_id",
-                           {"status_id": started_id, "job_id": job_id})
-            cursor.execute("INSERT INTO job_runs (job_id, run_id, relation_type) VALUES (:job_id, :run_id, 'CREATED')",
-                           {"job_id": job_id, "run_id": run_id})
-            _event(cursor, job_id, started_id, "RUN_STARTED", "Töötlemiskatse algas.")
-            conn.commit()
-
-        resolved = resolve(str(job["source_url"]))
-        selected = next((item for item in resolved["media_items"]
-                         if item.get("canonical_url") and _same_url(item["canonical_url"], _media_url(job_id))), None)
-        # If the resolver returns only one item, it is unambiguously selected.
-        if selected is None and len(resolved["media_items"]) == 1:
-            selected = resolved["media_items"][0]
-        if selected is None:
-            raise RuntimeError("Selected media is no longer present in resolver response")
-        output_dir = ensure_external_output(settings().runtime_root / "outputs" / f"job-{job_id}", settings())
-        result_dir = process(RunContext(source_url=str(job["source_url"]), output_dir=str(output_dir)), settings(), int(selected["index"]))
-        _finish_success(job_id, int(run_id), result_dir)
+        output_dir = ensure_external_output(settings().runtime_root / "outputs" / f"process-{process_id}", settings())
+        context = RunContext(
+            source_url=str(activity["source_url"]),
+            output_dir=str(output_dir),
+            work_key=f"process-{process_id}",
+        )
+        if activity["activity_type"] == "DOWNLOADING":
+            resolved = resolve(str(activity["source_url"]))
+            selected = next(
+                (
+                    item for item in resolved["media_items"]
+                    if item.get("canonical_url") and _same_url(str(item["canonical_url"]), str(activity["media_url"]))
+                ),
+                None,
+            )
+            if selected is None and len(resolved["media_items"]) == 1:
+                selected = resolved["media_items"][0]
+            if selected is None:
+                raise RuntimeError("Selected media is no longer present in resolver response")
+            prepare_media(context, settings(), int(selected["index"]))
+            transition_to_diarizing(process_id, activity_id)
+            return
+        if activity["activity_type"] == "DIARIZING":
+            prepared = resume_prepared(context, settings())
+            result_dir = complete_diarization(prepared, context, settings())
+            finish_success(process_id, activity_id, result_dir)
+            return
+        raise RuntimeError(f"Unsupported worker activity: {activity['activity_type']}")
     except Exception as exc:
-        _finish_failure(job_id, run_id, exc)
-    return True
+        finish_failure(process_id, activity_id, exc)
 
 
-def _media_url(job_id: int) -> str:
+def transition_to_diarizing(process_id: int, previous_activity_id: int) -> int:
     with connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT m.canonical_url FROM jobs j JOIN media_items m ON m.id = j.media_item_id WHERE j.id = :id", {"id": job_id})
-        row = cursor.fetchone()
-        if row is None:
-            raise RuntimeError("Job media was not found")
-        return str(row[0])
+        cursor.execute(
+            """UPDATE activities
+                  SET finished_at = SYSTIMESTAMP, result = 'OK', last_updated = SYSTIMESTAMP
+                WHERE id = :activity_id AND process_id = :process_id
+                  AND finished_at IS NULL""",
+            {"activity_id": previous_activity_id, "process_id": process_id},
+        )
+        activity_var = cursor.var(int)
+        cursor.execute(
+            """INSERT INTO activities
+                   (process_id, previous_activity_id, activity_type, started_at)
+                VALUES (:process_id, :previous_activity_id, 'DIARIZING', SYSTIMESTAMP)
+                RETURNING id INTO :activity_id""",
+            {"process_id": process_id, "previous_activity_id": previous_activity_id, "activity_id": activity_var},
+        )
+        activity_id = int(activity_var.getvalue()[0])
+        cursor.execute(
+            "UPDATE processes SET status = 'DIARIZING', last_updated = SYSTIMESTAMP WHERE id = :process_id",
+            {"process_id": process_id},
+        )
+        conn.commit()
+        return activity_id
 
 
-def _finish_success(job_id: int, run_id: int, result_dir: Path) -> None:
+def finish_success(process_id: int, activity_id: int, result_dir: Path) -> None:
     with connection() as conn:
         cursor = conn.cursor()
-        succeeded_id = _status_id(cursor, "SUCCEEDED")
-        cursor.execute("UPDATE runs SET status = 'SUCCEEDED', finished_at = SYSTIMESTAMP WHERE id = :id", {"id": run_id})
-        cursor.execute("UPDATE jobs SET job_status_id = :status_id, resolved_at = SYSTIMESTAMP WHERE id = :job_id",
-                       {"status_id": succeeded_id, "job_id": job_id})
-        _event(cursor, job_id, succeeded_id, "RUN_FINISHED", "Töötlus valmis.")
+        cursor.execute(
+            """UPDATE activities
+                  SET finished_at = SYSTIMESTAMP, result = 'OK', last_updated = SYSTIMESTAMP
+                WHERE id = :activity_id AND process_id = :process_id AND finished_at IS NULL""",
+            {"activity_id": activity_id, "process_id": process_id},
+        )
+        next_activity_var = cursor.var(int)
+        cursor.execute(
+            """INSERT INTO activities (process_id, previous_activity_id, activity_type, started_at)
+                VALUES (:process_id, :previous_activity_id, 'WAITING_FOR_PARTICIPANTS', SYSTIMESTAMP)
+                RETURNING id INTO :activity_id""",
+            {"process_id": process_id, "previous_activity_id": activity_id, "activity_id": next_activity_var},
+        )
+        cursor.execute(
+            "UPDATE processes SET status = 'WAITING_FOR_PARTICIPANTS', last_updated = SYSTIMESTAMP WHERE id = :process_id",
+            {"process_id": process_id},
+        )
         version_var = cursor.var(int)
-        cursor.execute("""INSERT INTO transcript_versions
-            (run_id, version_number, version_type, status)
-            VALUES (:run_id, 1, 'AUTOMATIC_DRAFT', 'DRAFT')
-            RETURNING id INTO :version_id""", {"run_id": run_id, "version_id": version_var})
+        cursor.execute(
+            """INSERT INTO transcript_versions
+                   (process_id, activity_id, version_number, version_type, status)
+                VALUES (:process_id, :activity_id, 1, 'AUTOMATIC_DRAFT', 'DRAFT')
+                RETURNING id INTO :version_id""",
+            {"process_id": process_id, "activity_id": activity_id, "version_id": version_var},
+        )
         version_id = int(version_var.getvalue()[0])
         for path in sorted(result_dir.iterdir()):
             if not path.is_file():
                 continue
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
             artifact_var = cursor.var(int)
-            cursor.execute("""INSERT INTO artifacts
-                (artifact_type, path, content_type, size_byte, sha256)
-                VALUES (:type, :path, :content_type, :size_byte, :sha256)
-                RETURNING id INTO :artifact_id""",
-                {"type": path.suffix.lstrip(".").upper() or "FILE", "path": str(path),
-                 "content_type": mimetypes.guess_type(path.name)[0] or "application/octet-stream",
-                 "size_byte": path.stat().st_size, "sha256": digest, "artifact_id": artifact_var})
+            cursor.execute(
+                """INSERT INTO artifacts (artifact_type, path, content_type, size_byte, sha256)
+                    VALUES (:artifact_type, :path, :content_type, :size_byte, :sha256)
+                    RETURNING id INTO :artifact_id""",
+                {
+                    "artifact_type": path.suffix.lstrip(".").upper() or "FILE",
+                    "path": str(path),
+                    "content_type": mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+                    "size_byte": path.stat().st_size,
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    "artifact_id": artifact_var,
+                },
+            )
             artifact_id = int(artifact_var.getvalue()[0])
-            cursor.execute("INSERT INTO run_artifacts (run_id, artifact_id) VALUES (:run_id, :artifact_id)",
-                           {"run_id": run_id, "artifact_id": artifact_id})
+            cursor.execute(
+                "INSERT INTO activity_artifacts (activity_id, artifact_id) VALUES (:activity_id, :artifact_id)",
+                {"activity_id": activity_id, "artifact_id": artifact_id},
+            )
             if path.suffix.lower() in {".vtt", ".json", ".md"}:
-                cursor.execute("""INSERT INTO transcript_artifacts
-                    (transcript_version_id, artifact_id)
-                    VALUES (:version_id, :artifact_id)""",
-                               {"version_id": version_id, "artifact_id": artifact_id})
+                cursor.execute(
+                    "INSERT INTO transcript_artifacts (transcript_version_id, artifact_id) VALUES (:version_id, :artifact_id)",
+                    {"version_id": version_id, "artifact_id": artifact_id},
+                )
         conn.commit()
 
 
-def _finish_failure(job_id: int, run_id: int | None, exc: Exception) -> None:
+def finish_failure(process_id: int, activity_id: int, exc: Exception) -> None:
     with connection() as conn:
         cursor = conn.cursor()
-        failed_id = _status_id(cursor, "FAILED")
-        if run_id is not None:
-            cursor.execute("UPDATE runs SET status = 'FAILED', finished_at = SYSTIMESTAMP WHERE id = :id", {"id": run_id})
-        cursor.execute("UPDATE jobs SET job_status_id = :status_id, error_code = :code, error_message = :message WHERE id = :job_id",
-                       {"status_id": failed_id, "code": type(exc).__name__, "message": str(exc)[:2000], "job_id": job_id})
-        _event(cursor, job_id, failed_id, "RUN_FAILED", f"{type(exc).__name__}: {exc}"[:4000])
+        cursor.execute(
+            """UPDATE activities
+                  SET finished_at = SYSTIMESTAMP, result = 'ERROR',
+                      error_code = :error_code, error_message = :error_message,
+                      last_updated = SYSTIMESTAMP
+                WHERE id = :activity_id AND process_id = :process_id AND finished_at IS NULL""",
+            {"activity_id": activity_id, "process_id": process_id,
+             "error_code": type(exc).__name__, "error_message": str(exc)[:4000]},
+        )
+        cursor.execute(
+            """UPDATE processes
+                  SET status = 'CANCELLED', finished_at = SYSTIMESTAMP, last_updated = SYSTIMESTAMP
+                WHERE id = :process_id AND finished_at IS NULL""",
+            {"process_id": process_id},
+        )
         conn.commit()
 
 
-def _status_id(cursor, code: str) -> int:
-    cursor.execute("SELECT id FROM job_statuses WHERE code = :code AND end_date IS NULL", {"code": code})
-    row = cursor.fetchone()
-    if row is None:
-        raise RuntimeError(f"Missing job status: {code}")
-    return int(row[0])
-
-
-def _event(cursor, job_id: int, status_id: int, event_type: str, detail: str) -> None:
-    cursor.execute("INSERT INTO job_events (job_id, job_status_id, event_type, detail) VALUES (:job_id, :status_id, :event_type, :detail)",
-                   {"job_id": job_id, "status_id": status_id, "event_type": event_type, "detail": detail})
+def reconcile_waiting_processes() -> None:
+    with connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """SELECT child.id, child.parent_process_id, parent.status
+                 FROM processes child
+                 JOIN processes parent ON parent.id = child.parent_process_id
+                WHERE child.status = 'WAITING_FOR_RESULT'
+                  AND child.finished_at IS NULL
+                  AND parent.finished_at IS NOT NULL
+                  AND parent.status IN ('FINISHED', 'CANCELLED')
+                  AND child.end_date IS NULL AND parent.end_date IS NULL
+                FOR UPDATE OF child.id SKIP LOCKED"""
+        )
+        rows = cursor.fetchall()
+        for child_id, _, parent_status in rows:
+            result = "OK" if parent_status == "FINISHED" else "CANCELLED"
+            cursor.execute(
+                """UPDATE activities
+                      SET finished_at = SYSTIMESTAMP, result = :result, last_updated = SYSTIMESTAMP
+                    WHERE process_id = :process_id AND activity_type = 'WAITING_FOR_RESULT'
+                      AND finished_at IS NULL""",
+                {"process_id": int(child_id), "result": result},
+            )
+            cursor.execute(
+                """UPDATE processes
+                      SET status = :status, finished_at = SYSTIMESTAMP, last_updated = SYSTIMESTAMP
+                    WHERE id = :process_id AND finished_at IS NULL""",
+                {"process_id": int(child_id), "status": parent_status},
+            )
+        conn.commit()
 
 
 def _same_url(left: str, right: str) -> bool:
     return left.rstrip("/") == right.rstrip("/")
 
 
+def run_loop() -> None:
+    diarization_workers = max_workers()
+    download_futures: set[Future[None]] = set()
+    diarization_futures: set[Future[None]] = set()
+    with (ThreadPoolExecutor(thread_name_prefix="err2text-download") as download_executor,
+          ThreadPoolExecutor(max_workers=diarization_workers, thread_name_prefix="err2text-diarization") as diarization_executor):
+        while True:
+            reconcile_waiting_processes()
+            while True:
+                activity = claim_next_activity("DOWNLOADING")
+                if activity is None:
+                    break
+                download_futures.add(download_executor.submit(process_one, activity))
+            while len(diarization_futures) < diarization_workers:
+                activity = claim_next_activity("DIARIZING")
+                if activity is None:
+                    break
+                diarization_futures.add(diarization_executor.submit(process_one, activity))
+            done_downloads = {future for future in download_futures if future.done()}
+            done_diarizations = {future for future in diarization_futures if future.done()}
+            for future in done_downloads | done_diarizations:
+                future.result()
+            download_futures -= done_downloads
+            diarization_futures -= done_diarizations
+            if not download_futures and not diarization_futures:
+                time.sleep(5)
+            else:
+                time.sleep(1)
+
+
 if __name__ == "__main__":
     if "--once" in sys.argv:
-        process_one()
+        activity = claim_next_activity("DOWNLOADING") or claim_next_activity("DIARIZING")
+        if activity is not None:
+            process_one(activity)
+        reconcile_waiting_processes()
     else:
-        while True:
-            if not process_one():
-                time.sleep(5)
+        run_loop()

@@ -215,7 +215,7 @@ Whisperi mudel on avalik ega vaja uut Hugging Face’i tokenit, kuid worker pär
 
 Kõik runtime-andmed asuvad hostis `/srv/err2text/` all ning peavad kuuluma `.env` failis määratud hosti `ERR2TEXT_UID:ERR2TEXT_GID` kasutajale (praegusel serveril `ubuntu`). Mõlemad worker-konteinerid käivituvad selle UID/GID-ga. Image'i ehituse ajal võivad `/app` lähtekoodifailid kuuluda root'ile, sest worker loeb neid ainult; runtime-konteiner ei tohi kirjutada projekti checkout'i ega luua `/srv/err2text` alla root-omanikuga faile. Vajalikud hostikataloogid (`outputs`, `work`, `models/huggingface`, `cache`, `home`, `maps`, `review-inputs`) tuleb enne esimest käivitust luua õige omaniku ja kirjutusõigusega. Kood ei kasuta `sudo`, `chown` ega privileegide tõstmist; õiguste viga peab lõppema selge veaga, mitte vaikse root-kirjutusega.
 
-MVP 1.2 ei tõsta olemasolevaid ühe jooksu väljundkatalooge ümber. Mitme töötlusjooksu püsiv paigutus võetakse kasutusele teenusekihi etapil kujul `<source-slug>/runs/<UTC-run-id>/`; iga jooks sisaldab oma põhiartefakte ja võimalikku `review/whisper/` alamkataloogi. Seega ei kasutata tulevikus ebaselgeid nimesid nagu `reinsalu-isamaa-1` ja `reinsalu-isamaa-2`.
+MVP 1.2 ei tõsta olemasolevaid ühe protsessi väljundkatalooge ümber. Mitme protsessi püsiv paigutus võetakse kasutusele teenusekihi etapil kujul `<source-slug>/processes/<UTC-process-id>/`; iga protsess sisaldab oma põhiartefakte ja võimalikku `review/whisper/` alamkataloogi. Seega ei kasutata tulevikus ebaselgeid nimesid nagu `reinsalu-isamaa-1` ja `reinsalu-isamaa-2`.
 
 MVP 1.2 esimene kontrolljuhtum on juba käsitsi nimedega kinnitatud Reinsalu intervjuu. Claude’i analüüsis nimetatud kohad lähevad käsitsi kandidaatide faili ning neid käsitletakse hüpoteesidena, mitte tõestatud vigadena. Võrdluses hinnatakse vähemalt: kandidaatide arv, inimese poolt tegelikult valeks tunnistatud omistuste arv, Whisperi poolt nähtavaks tehtud põhjendatud kõnelejapiirid ning kontrolliks kulunud aeg. Esmakordse image’i ehituse ja esimese kontrolljooksu teeb projekti kasutaja käsurealt; arendaja ei käivita neid selle muudatuse osana.
 
@@ -277,12 +277,22 @@ MVP2 skoobis on:
 
 - FastAPI-põhine API transkriptsioonitöö esitamiseks;
 - eraldi worker-konteiner CPU-raske audio hankimise, diarization’i ja liitmise käivitamiseks; FastAPI protsess ei tee diarization’it ise;
-- tööde olekud `QUEUED`, `RESOLVING`, `DOWNLOADING`, `DIARIZING`, `MERGING`, `SUCCEEDED`, `FAILED`, `CANCELLED` ning tulemuse, vea ja edenemise pärimine;
+- protsessikirje loomine alles pärast kasutaja kinnitust;
+- protsessi ja selle järjestikuste tegevuste alguse, lõpu ja tulemuse säilitamine;
+- protsessi hetkestaatus tuleneb parajasti poolelioleva tegevuse liigist;
+- protsessi lõppstaatused `FINISHED` ja `CANCELLED`;
+- tegevuse tulemused `OK`, `ERROR` ja `CANCELLED`; poolelioleval tegevusel tulemust ei ole;
+- taustal käivitatava tegevuse tehniline hõivamine `execution_started_at`
+  väljaga; see ei ole tegevuse äriline staatus ega tulemus;
+- diariseerimise samaaegsuse piir konfiguratsiooniga
+  `ERR2TEXT_MAX_CONCURRENT_DIARIZATIONS`, vaikimisi `1`;
+- protsessidevaheline `parent_process_id` seos sama meedia juba aktiivse töötlemise ootamiseks;
+- lühikesed atomaartransaktsioonid tegevuse lõpetamiseks ja järgmise tegevuse alustamiseks; pikka diarization'i või ülevaatuse tööd ei tehta avatud andmebaasitransaktsiooni sees;
 - töö ajalõpp, katkestamine ja restarti järel kinnijäänud `RUNNING` töö tuvastamine/taastamine;
 - API kaudu väljundpaketi (`original.vtt`, `normalized.vtt`, `speakers.json`, `speaker_review.json`, `transcript.json`, `<meedia-slug>-transcript.md`) allalaadimine;
 - Oracle Database 26ai andmebaasis sellele rakendusele rangelt eraldi schema;
 - transkriptsioonitööde, allikate, väljundite metaandmete ja failiviidete säilitamine;
-- juba digitaliseeritud saadete korduvkasutuse tuvastamine, et sama URL-i ei töödelda põhjendamatult uuesti;
+- juba digitaliseeritud saadete korduvkasutuse tuvastamine, et sama meediat ei töödelda põhjendamatult uuesti; aktiivse sama meedia korral luuakse sõltuv protsess, mis ootab põhiprotsessi tulemust;
 - veebiliides aadressil `https://err2text.fun-o.eu`, kus kasutaja sisestab ERR-i URL-i, valib mitme leitud meediaelemendi korral sobiva elemendi, käivitab töö, näeb olekut/veateadet ja avab või laadib alla tulemused;
 - veebivaade põhi-Markdownile ning struktureeritud transkriptsioonile koos algse saate lingi, pealkirja, kuupäeva, töötlusversiooni ja töö oleku metadata'ga.
 
@@ -291,6 +301,69 @@ MVP2 veebiliides on esmalt piiratud töövahend. Selles etapis ei tehta veel kõ
 ### MVP2.1 — autentimiseta veebikasutus
 
 MVP2.1 avab MVP2 veebiliidese ilma autentimiseta kasutamiseks aadressil `https://err2text.fun-o.eu`. Anonüümne kasutaja saab esitada ERR-i URL-i, jälgida oma töö olekut ning avada tulemused. Kuna diarization on CPU-mahukas, on MVP2.1 algne samaaegsuse piir konfiguratsioonist määratav ning vaikimisi üks diarization-töö korraga. MVP2.1 ei rakenda veel IP-põhist päringusageduse piirangut; see kuulub hilisemasse autentimise ja kasutuspiirangute etappi. Anonüümsele kasutajale ei lubata vaikimisi teiste kasutajate tööandmete vaatamist.
+
+### MVP2 protsessi- ja tegevusmudel
+
+Protsess algab BPMN-i mõttes alles siis, kui kasutaja on meedia valiku ja
+transkribeerimise alustamise kinnitanud. Enne seda võib URL-i lahendada ja
+meedia valikuid näidata, kuid protsessi ega tegevuse kirjet ei looda.
+
+Protsess koosneb järjestikustest tegevustest. Igal tegevusel on:
+
+- algusaeg;
+- lõpuaeg, mis on alguses `NULL`;
+- tulemus, mis on alguses `NULL` ja tekib ainult koos lõpuga;
+- tegevuse liik, näiteks `DOWNLOADING`, `DIARIZING`,
+  `WAITING_FOR_PARTICIPANTS` või `WAITING_FOR_RESULT`.
+
+Tegevuse võimalikud tulemused on `OK`, `ERROR` ja `CANCELLED`. Tegevusel ei
+ole muutuvat staatust. Sama tegevuse liik võib ühes protsessis korduda, näiteks
+uue diariseerimiskatse või osalejate uue määramise korral.
+
+Tegevuse äriline algus ja worker’i tehniline käivitus on eri sündmused. Tegevus
+luuakse BPMN-i üleminekul ning selle `started_at` tekib kasutaja kinnituse või
+eelmise tegevuse lõpu tõttu. Ainult worker võib täita tehnilist välja
+`execution_started_at`, kui ta tegevuse järjekorrast üles korjab. API ega muu
+tegevuse loomise loogika seda välja ei täida.
+
+`DOWNLOADING` luuakse alguses ilma `execution_started_at` väärtuseta. Worker
+määrab selle tegevuse tegelikul käivitamisel. Kui meedia hankimine lõpeb,
+lõpetatakse `DOWNLOADING` ja luuakse samas protsessis `DIARIZING`, samuti ilma
+`execution_started_at` väärtuseta. Diariseerimise worker määrab selle alles
+siis, kui tal on võimalik diariseerimine tegelikult käivitada. Nii võib
+`DIARIZING` tegevus äriliselt juba alanud olla, kuid tehniliselt veel järjekorras
+oodata.
+
+`ERR2TEXT_MAX_CONCURRENT_DIARIZATIONS` piirang kehtib ainult `DIARIZING`
+tegevustele. `DOWNLOADING` tegevusi see piirang ei blokeeri: allalaadimised
+võivad toimuda diariseerimisega samal ajal.
+
+Kasutaja tegevustel, näiteks `WAITING_FOR_PARTICIPANTS` ja `IN_REVIEW`,
+`execution_started_at` väärtust ei ole, sest neid ei käivita worker. Kõik
+tegevuste loomised, lõpetamised ja järgmisele BPMN-i tegevusele üleminekud
+peavad jääma sama protsessi sisse ning tegevuste vahel ei tohi olla
+ristviiteid. Käimasolevate diariseerimiste arv ei tohi ületada
+`ERR2TEXT_MAX_CONCURRENT_DIARIZATIONS` väärtust; vaikimisi on see `1`.
+Allalaadimiste ja diariseerimiste tööjaotus peab olema eraldi, et diariseerimise
+piirang ei takistaks allalaadimiste alustamist. Worker’i hõivamine peab toimuma
+atomaarse andmebaasitehinguna.
+
+Protsessil on üks hetkestaatus, mis tuleneb lõpetamata tegevusest. Protsess
+lõpeb ainult BPMN-i lõpusündmusel ning saab siis lõppaja ja staatuse
+`FINISHED` või `CANCELLED`. Tegevuse `ERROR` ei lõpeta protsessi iseenesest;
+BPMN-i otsustuspunkt määrab, kas tegevust korratakse või kasutaja katkestab
+protsessi.
+
+Iga tegevuse üleminek on üks lühike andmebaasitransaktsioon: aktiivne tegevus
+lõpetatakse, uus tegevus lisatakse ja protsessi staatus uuendatakse sama
+`COMMIT`-i sees. Pika tegevuse ajal andmebaasitransaktsiooni avatuna ei hoita.
+
+Kui uue protsessi alustamisel leitakse sama meedia kohta aktiivne põhiprotsess,
+ei käivitata uut diariseerimist. Uus protsess viitab `parent_process_id` kaudu
+põhiprotsessile ja algab tegevusega `WAITING_FOR_RESULT`. Taustakontroll
+lõpetab sõltuva protsessi, kui põhiprotsess lõpeb. Põhiprotsessi tulemus
+kantakse sõltuvale protsessile üle; katkestatud põhiprotsess lõpetab ka sõltuva
+protsessi. See on tehniline reegel BPMN-i kõrval, mitte uus põhivoog.
 
 ### MVP2.2 — kõnelejapiiride kasutaja–süsteemi ülevaatus
 
@@ -480,7 +553,7 @@ Google autent   tööde haldus  Oracle (otseühendus või ORDS)
         väljundfailide hallatud salvestus
 ```
 
-FastAPI peab jääma õhukeseks API-, autentimis- ja tööhalduse kihiks. Diarization on pikaajaline CPU-töö ning käib eraldi worker-konteineris, mitte FastAPI protsessis. Kuna serveris on ainult neli CPU tuuma, peab samaaegsete tööde arv olema piiratud; algne poliitika on üks diarization-töö korraga.
+FastAPI peab jääma õhukeseks API-, autentimis- ja tööhalduse kihiks. Diarization on pikaajaline CPU-töö ning käib eraldi worker-konteineris, mitte FastAPI protsessis. Kuna serveris on ainult neli CPU tuuma, peab samaaegsete diarization-tööde arv olema piiratud; algne poliitika on üks diarization-töö korraga. Allalaadimisi see piirang ei hõlma.
 
 Veebivorm ja API peavad kasutama sama töömudelit ning looma samasuguse väljundpaketi. Veebivormi avalik aadress on `https://err2text.fun-o.eu`. nginx lõpetab TLS-i, serveerib veebivormi ning suunab API päringud FastAPI konteinerisse. FastAPI ning diarization-töötlus ei pea olema internetist otse pordiga avaldatud.
 

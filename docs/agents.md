@@ -46,6 +46,7 @@
 - Kasutajaliidese tekstid peavad olema tõlgetest, mitte kõvakodeeritud.
 - Koodis ei tohi olla kõvakodeeritud ekraanitekste; puudumisel kasutatakse tõlkevõtit ennast, et puuduvad tõlked nähtavale tuleksid.
 - Koodis olevad tekstilabelid peavad olema kontekstis unikaalsed, et neid saaks sõltumatult muuta.
+- Modal-overlayde korral on korraga aktiivne ainult kõige ülemine modal. Selle all olevad modalid ja ülejäänud leht peavad olema mitteaktiivsed, kuni ülemine modal suletakse.
 - SQL-koodis ei tohi samasisulisi konstante, protseduure ja funktsioone põhjendamatult korrata; korduvkasutatav loogika tuleb teha ühisesse moodulisse.
 - Eelista korduvate väärtuste puhul eeldefineeritud konstante.
 - Ühendused Oracle’iga peavad kasutama ühenduste pooli, `.env`-põhiseid saladusi ja väikseimate õiguste põhimõtet.

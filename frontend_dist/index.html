@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="stylesheet" href="./assets/app.css?v=5" />
+    <link rel="stylesheet" href="./assets/app.css?v=10" />
     <title>ERR2TEXT</title>
   </head>
   <body>
@@ -19,7 +19,10 @@
         <form id="resolveForm" novalidate>
           <label for="sourceUrl" data-i18n="source.url_label"></label>
           <div class="form-row">
-            <input id="sourceUrl" name="url" type="url" required autocomplete="url" data-i18n-placeholder="source.url_placeholder" />
+            <div class="input-with-clear">
+              <input id="sourceUrl" name="url" type="url" required autocomplete="url" data-i18n-placeholder="source.url_placeholder" />
+              <button id="clearUrlButton" class="clear-button" type="button" data-i18n-aria-label="source.clear_url" data-i18n-title="source.clear_url">×</button>
+            </div>
             <button id="resolveButton" type="submit" data-i18n="source.resolve_button"></button>
           </div>
         </form>
@@ -40,7 +43,10 @@
         <p class="muted" data-i18n="media.help"></p>
         <form id="jobForm">
           <div id="mediaChoices" class="media-choices"></div>
-          <button id="createJobButton" type="submit" data-i18n="media.start_button"></button>
+          <div class="media-actions">
+            <button id="createJobButton" type="submit" data-i18n="media.start_button"></button>
+            <button id="cancelMediaButton" class="secondary-button" type="button" data-i18n="media.cancel_button"></button>
+          </div>
         </form>
         <div id="jobMessage" class="message" role="status" aria-live="polite"></div>
       </section>
@@ -63,21 +69,19 @@
         <div id="artifactList" class="artifact-list hidden"></div>
       </section>
 
-      <section class="card" aria-labelledby="history-title">
+      <section id="historyCard" class="card" aria-label="" data-i18n-aria-label="history.aria_label">
         <div class="section-heading">
-          <div>
-            <p class="eyebrow" data-i18n="history.eyebrow"></p>
-            <h2 id="history-title" data-i18n="history.title"></h2>
-          </div>
+          <div></div>
           <button id="historyRefreshButton" class="secondary-button" type="button" data-i18n="history.refresh"></button>
         </div>
+        <div id="diarizationNotice" class="diarization-notice hidden" role="status" aria-live="polite"></div>
         <div id="historyMessage" class="message" role="status" aria-live="polite"></div>
         <div id="historyList" class="history-list"></div>
       </section>
 
       <footer class="site-footer" data-i18n="app.footer"></footer>
     </main>
-    <dialog id="artifactViewer" class="artifact-viewer">
+    <dialog id="artifactViewer" class="artifact-viewer" aria-modal="true">
       <div class="artifact-viewer-head">
         <h2 id="artifactViewerTitle"></h2>
         <div class="artifact-viewer-actions">
@@ -88,6 +92,21 @@
       <div id="artifactViewerMessage" class="message" role="status" aria-live="polite"></div>
       <div id="artifactViewerContent" class="artifact-viewer-content"></div>
     </dialog>
-    <script src="./assets/app.js?v=5" defer></script>
+    <dialog id="errorViewer" class="error-viewer" aria-modal="true">
+      <h2 data-i18n="errors.title"></h2>
+      <p id="errorViewerMessage"></p>
+      <div class="error-viewer-actions">
+        <button id="errorViewerOk" class="secondary-button" type="button" data-i18n="errors.ok"></button>
+      </div>
+    </dialog>
+    <dialog id="jobInfoViewer" class="job-viewer" aria-modal="true">
+      <div class="job-viewer-head"><h2 data-i18n="history.info_title"></h2><button id="jobInfoClose" class="secondary-button" type="button" data-i18n="artifacts.close"></button></div>
+      <div id="jobInfoContent" class="job-info-content"></div>
+    </dialog>
+    <dialog id="jobHistoryViewer" class="job-viewer" aria-modal="true">
+      <div class="job-viewer-head"><h2 data-i18n="history.processing_title"></h2><button id="jobHistoryClose" class="secondary-button" type="button" data-i18n="artifacts.close"></button></div>
+      <div id="jobHistoryContent" class="job-history-content"></div>
+    </dialog>
+    <script src="./assets/app.js?v=26" defer></script>
   </body>
 </html>
