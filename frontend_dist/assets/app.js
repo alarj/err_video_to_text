@@ -16,6 +16,7 @@ const state = {
   translations: null,
   participantReview: null,
   participantPlayers: new Map(),
+  review: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -549,6 +550,382 @@ async function saveParticipantReview() {
   }
 }
 
+function destroyReviewPlayer() {
+  const player = state.review?.player;
+  player?.destroy?.();
+  if (state.review) state.review.player = null;
+}
+
+function setupReviewPlayer(url) {
+  destroyReviewPlayer();
+  const video = $("#reviewVideo");
+  const message = $("#reviewPlayerMessage");
+  message.textContent = "";
+  if (window.Hls?.isSupported()) {
+    const hls = new window.Hls({ enableWorker: true });
+    hls.loadSource(url);
+    hls.attachMedia(video);
+    hls.on(window.Hls.Events.ERROR, (_event, data) => {
+      if (data?.fatal) message.textContent = translate("participants.player_error");
+    });
+    state.review.player = { destroy: () => { hls.destroy(); video.pause(); } };
+  } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+    video.src = url;
+    state.review.player = { destroy: () => { video.pause(); video.removeAttribute("src"); video.load(); } };
+  } else {
+    message.textContent = translate("participants.player_unsupported");
+  }
+}
+
+function reviewStatusLabel(status) {
+  return translate(`review.${String(status || "pending").toLowerCase()}`);
+}
+
+function reviewSpeakerName(entry) {
+  return entry?.participant_name || entry?.speaker_label || translate("review.no_speaker");
+}
+
+function reviewSpeakerIntervals(segment) {
+  return [...(segment?.speakers || [])].sort((left, right) => (
+    Number(left.start_second) - Number(right.start_second) || Number(left.end_second) - Number(right.end_second)
+  ));
+}
+
+function reviewProposedBoundary(intervals) {
+  for (let index = 1; index < intervals.length; index += 1) {
+    const previous = intervals[index - 1];
+    const current = intervals[index];
+    if (previous.transcript_participant_id !== current.transcript_participant_id) {
+      const boundary = Math.max(Number(previous.start_second), Math.min(Number(current.start_second), Number(previous.end_second)));
+      return boundary;
+    }
+  }
+  return null;
+}
+
+function renderReviewIntervals(segment) {
+  const intervals = reviewSpeakerIntervals(segment);
+  if (!intervals.length) return null;
+  const container = document.createElement("div");
+  container.className = "review-speaker-intervals";
+  const heading = document.createElement("span");
+  heading.className = "review-speaker-intervals-title";
+  heading.textContent = translate("review.intervals");
+  container.appendChild(heading);
+  const grouped = new Map();
+  intervals.forEach((interval) => {
+    const key = interval.transcript_participant_id ?? interval.speaker_label;
+    const group = grouped.get(key) || { name: reviewSpeakerName(interval), ranges: [] };
+    group.ranges.push(`${formatSeconds(interval.start_second)}–${formatSeconds(interval.end_second)}`);
+    grouped.set(key, group);
+  });
+  grouped.forEach((group) => {
+    const badge = document.createElement("span");
+    badge.className = "review-speaker-interval";
+    badge.textContent = `${group.name} ${group.ranges.join(", ")}`;
+    container.appendChild(badge);
+  });
+  const boundary = reviewProposedBoundary(intervals);
+  const proposal = document.createElement("span");
+  proposal.className = "review-speaker-boundary";
+  proposal.textContent = boundary === null
+    ? translate("review.no_boundary")
+    : `${translate("review.proposed_boundary")}: ${formatSeconds(boundary)}`;
+  container.appendChild(proposal);
+  return container;
+}
+
+function renderReview() {
+  const review = state.review;
+  const candidates = review?.data?.candidates || [];
+  const candidate = candidates[review.index];
+  if (!candidate) {
+    $("#reviewTranscript").textContent = translate("review.no_candidates");
+    $("#reviewProgress").textContent = "";
+    return;
+  }
+  const pendingCount = candidates.filter((item) => item.status === "PENDING").length;
+  $("#reviewProgress").textContent = `${review.index + 1} / ${candidates.length} · ${reviewStatusLabel(candidate.status)} · ${pendingCount} ${translate("review.unresolved")}`;
+  const transcript = $("#reviewTranscript");
+  transcript.replaceChildren();
+  const candidateBySegment = new Map(candidates.map((item) => [item.segment.id, item]));
+  const activeSplitIds = new Set(
+    (candidate.reviewed_segments || []).map((entry) => entry.id).filter((id) => id !== candidate.segment.id),
+  );
+  (review.data.segments || []).forEach((segment) => {
+    if (activeSplitIds.has(segment.id)) return;
+    const item = candidateBySegment.get(segment.id);
+    const row = document.createElement("article");
+    row.id = `review-segment-${segment.id}`;
+    row.className = `review-transcript-segment ${item ? "is-candidate" : ""} ${item ? `review-status-${String(item.status || "PENDING").toLowerCase()}` : ""} ${item?.id === candidate.id ? "is-active" : ""}`;
+    const meta = document.createElement("span");
+    meta.className = "review-transcript-time";
+    meta.textContent = `${formatSeconds(segment.start_second)}–${formatSeconds(segment.end_second)}`;
+    if (item?.id === candidate.id) renderActiveReviewRow(row, segment, item, review, meta);
+    else {
+      row.appendChild(meta);
+      const text = document.createElement("div");
+      text.className = "review-transcript-text";
+      const firstSpeaker = reviewSpeakerIntervals(segment)[0];
+      if (firstSpeaker) { const speaker = document.createElement("strong"); speaker.textContent = `${reviewSpeakerName(firstSpeaker)} `; text.appendChild(speaker); }
+      const textValue = document.createElement(item ? "mark" : "span");
+      if (item) textValue.className = "review-candidate-mark";
+      textValue.textContent = segment.text || "";
+      if (item) textValue.addEventListener("click", (event) => { event.stopPropagation(); review.index = candidates.indexOf(item); renderReview(); });
+      text.appendChild(textValue);
+      if (item) {
+        const badge = document.createElement("span");
+        badge.className = "review-status-badge";
+        badge.textContent = reviewStatusLabel(item.status);
+        text.appendChild(badge);
+        appendReviewReasonToggle(text, item.reason);
+      }
+      row.appendChild(text);
+    }
+    if (item && item.id !== candidate.id) {
+      row.tabIndex = 0;
+      const activateCandidate = () => { review.index = candidates.indexOf(item); renderReview(); };
+      row.addEventListener("click", activateCandidate);
+      row.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); activateCandidate(); } });
+    }
+    transcript.appendChild(row);
+  });
+  $("#reviewPrevious").disabled = review.index <= 0;
+  $("#reviewNext").disabled = review.index >= candidates.length - 1;
+  $("#reviewPrevious").setAttribute("aria-label", translate("review.previous_label"));
+  $("#reviewNext").setAttribute("aria-label", translate("review.next_label"));
+  const target = document.getElementById(`review-segment-${candidate.segment.id}`);
+  target?.scrollIntoView({ block: "center" });
+  const video = $("#reviewVideo");
+  video.__reviewCandidateId = candidate.id;
+  video.__reviewStart = Math.max(0, Number(candidate.segment.start_second) - 5);
+  video.__reviewEnd = Number(candidate.segment.end_second) + 5;
+  const seek = () => {
+    video.currentTime = video.__reviewStart;
+    video.__reviewSeekHandler = null;
+  };
+  if (video.readyState >= 1) seek();
+  else {
+    if (video.__reviewSeekHandler) video.removeEventListener("loadedmetadata", video.__reviewSeekHandler);
+    video.__reviewSeekHandler = seek;
+    video.addEventListener("loadedmetadata", seek, { once: true });
+  }
+  if (!video.__reviewEndHandler) {
+    video.__reviewEndHandler = () => {
+      if (video.currentTime >= video.__reviewEnd) {
+        video.pause();
+        video.currentTime = video.__reviewStart;
+      }
+    };
+    video.addEventListener("timeupdate", video.__reviewEndHandler);
+  }
+  if (!video.__reviewReplayHandler) {
+    video.__reviewReplayHandler = () => {
+      if (video.currentTime >= video.__reviewEnd - 0.05) video.currentTime = video.__reviewStart;
+    };
+    video.addEventListener("play", video.__reviewReplayHandler);
+  }
+}
+
+function reviewSpeakerOptions(review) {
+  const options = new Map();
+  (review.data.segments || []).flatMap((entry) => entry.speakers || []).forEach((entry) => options.set(entry.transcript_participant_id, entry));
+  return options;
+}
+
+function appendSpeakerOptions(select, options, currentValue) {
+  const system = document.createElement("option");
+  system.value = "__SYSTEM_NOTICE__";
+  system.textContent = translate("review.system_notice");
+  select.appendChild(system);
+  options.forEach((entry, id) => {
+    const option = document.createElement("option");
+    option.value = String(id);
+    option.textContent = entry.participant_name || entry.speaker_label;
+    select.appendChild(option);
+  });
+  select.value = currentValue || "";
+}
+
+function appendReviewReasonToggle(container, reason) {
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "review-reason-toggle";
+  toggle.textContent = "i";
+  toggle.title = translate("review.reason_info");
+  toggle.setAttribute("aria-label", translate("review.reason_info"));
+  const details = document.createElement("span");
+  details.className = "review-reason-details";
+  details.hidden = true;
+  details.textContent = reason || "";
+  toggle.addEventListener("click", (event) => {
+    event.stopPropagation();
+    details.hidden = !details.hidden;
+  });
+  container.append(toggle, details);
+}
+
+function renderActiveReviewRow(row, segment, candidate, review, meta) {
+  row.classList.add("review-editing");
+  const text = document.createElement("div");
+  text.className = "review-inline-line";
+  text.appendChild(meta);
+  const firstSpeaker = reviewSpeakerIntervals(segment)[0];
+  const editor = document.createElement("textarea");
+  editor.className = "review-inline-text";
+  editor.value = segment.text || "";
+  editor.rows = editor.value.split("\n").reduce((total, line) => total + Math.max(1, Math.ceil(line.length / 120)), 0);
+  const options = reviewSpeakerOptions(review);
+  const currentSpeaker = firstSpeaker?.transcript_participant_id ? String(firstSpeaker.transcript_participant_id) : "__SYSTEM_NOTICE__";
+  const speakerSelect = document.createElement("select");
+  speakerSelect.className = "review-inline-speaker";
+  appendSpeakerOptions(speakerSelect, options, currentSpeaker);
+  text.append(speakerSelect, editor);
+  row.appendChild(text);
+
+  const controls = document.createElement("div");
+  controls.className = "review-inline-controls";
+  const save = document.createElement("button");
+  save.type = "button";
+  save.className = "results-button review-inline-save";
+  save.textContent = candidate.status === "PENDING" ? translate("review.confirm") : translate("review.confirmed");
+  const splitState = { position: null, left: null, right: null, leftSpeaker: currentSpeaker, rightSpeaker: currentSpeaker };
+  const splitParts = document.createElement("div");
+  splitParts.className = "review-split-parts";
+  const proposalLabel = document.createElement("div");
+  proposalLabel.className = "review-split-proposal";
+  const editHint = document.createElement("div");
+  editHint.className = "review-edit-hint";
+  editHint.textContent = translate("review.edit_hint");
+  function saveCurrent() {
+    saveInlineCandidate(candidate, editor, speakerSelect, splitState, save);
+  }
+  function markDirty() {
+    save.disabled = false;
+    save.textContent = translate("review.confirm");
+  }
+  function renderSplit(position, left, right, leftSpeaker, rightSpeaker, boundaryOverride = null, endOverride = null) {
+    if (!position || position > editor.value.length || (position === editor.value.length && right == null)) return;
+    splitState.position = position;
+    splitState.left = left ?? editor.value.slice(0, position).trimEnd();
+    splitState.right = right ?? editor.value.slice(position).trimStart();
+    splitState.leftSpeaker = leftSpeaker || currentSpeaker;
+    splitState.rightSpeaker = rightSpeaker || currentSpeaker;
+    splitParts.replaceChildren();
+    [["left", splitState.left, splitState.leftSpeaker], ["right", splitState.right, splitState.rightSpeaker]].forEach(([side, value, selected]) => {
+      const part = document.createElement("div"); part.className = "review-split-part";
+      const partTime = document.createElement("span"); partTime.className = "review-split-time";
+      const proposedBoundary = Number(candidate.proposed_boundary_second);
+      const boundary = Number.isFinite(proposedBoundary)
+        ? proposedBoundary
+        : Number.isFinite(Number(boundaryOverride))
+          ? Number(boundaryOverride)
+        : Number(segment.start_second) + (Number(segment.end_second) - Number(segment.start_second)) * (position / Math.max(1, editor.value.length));
+      const partStart = side === "left" ? Number(segment.start_second) : boundary;
+      const partEnd = side === "left" ? boundary : (Number.isFinite(Number(endOverride)) ? Number(endOverride) : Number(segment.end_second));
+      partTime.textContent = `${formatSeconds(partStart)}–${formatSeconds(partEnd)}`;
+      const partText = document.createElement("textarea"); partText.value = value; partText.rows = value.split("\n").reduce((total, line) => total + Math.max(1, Math.ceil(line.length / 120)), 0); partText.className = "review-inline-text";
+      const partSpeaker = document.createElement("select"); appendSpeakerOptions(partSpeaker, options, selected);
+      partText.addEventListener("input", () => { splitState[side] = partText.value; markDirty(); });
+      partSpeaker.addEventListener("change", () => { splitState[`${side}Speaker`] = partSpeaker.value; markDirty(); });
+      part.append(partTime, partSpeaker, partText); splitParts.appendChild(part);
+    });
+    text.hidden = true; text.classList.add("review-original-hidden"); editor.hidden = true; speakerSelect.hidden = true; splitParts.hidden = false;
+    splitButton.hidden = true;
+    splitReset.hidden = false;
+  }
+  function activateSplit() {
+    const position = editor.selectionStart;
+    if (!position || position >= editor.value.length) return;
+    renderSplit(position);
+  }
+  const splitButton = document.createElement("button");
+  splitButton.type = "button";
+  splitButton.className = "secondary-button review-inline-split";
+  splitButton.textContent = translate("review.split_here");
+  splitButton.addEventListener("click", activateSplit);
+  const splitReset = document.createElement("button");
+  splitReset.type = "button"; splitReset.className = "secondary-button review-inline-reset";
+  splitReset.textContent = translate("review.remove_split"); splitReset.hidden = true;
+  splitReset.addEventListener("click", () => { splitState.position = null; proposalLabel.hidden = true; splitParts.hidden = true; text.hidden = false; text.classList.remove("review-original-hidden"); editor.hidden = false; speakerSelect.hidden = false; splitButton.hidden = false; splitReset.hidden = true; });
+  editor.addEventListener("input", markDirty);
+  speakerSelect.addEventListener("change", () => { if (speakerSelect.value === "__SYSTEM_NOTICE__") speakerSelect.dataset.segmentType = "SYSTEM_NOTICE"; else speakerSelect.dataset.segmentType = "SPEECH"; markDirty(); });
+  save.addEventListener("click", saveCurrent);
+  controls.append(splitButton, splitReset, save);
+  appendReviewReasonToggle(controls, candidate.reason);
+  splitParts.hidden = true;
+  proposalLabel.hidden = true;
+  splitButton.hidden = false;
+  row.append(editHint, splitParts, controls);
+  save.disabled = candidate.status !== "PENDING";
+  const persistedParts = (candidate.reviewed_segments || []).slice().sort((left, right) => Number(left.segment_number) - Number(right.segment_number) || Number(left.id) - Number(right.id));
+  if (candidate.status !== "PENDING" && persistedParts.length > 1) {
+    const leftPart = persistedParts[0];
+    const rightPart = persistedParts[1];
+    const leftSpeaker = reviewSpeakerIntervals(leftPart)[0]?.transcript_participant_id
+      ? String(reviewSpeakerIntervals(leftPart)[0].transcript_participant_id) : "__SYSTEM_NOTICE__";
+    const rightSpeaker = reviewSpeakerIntervals(rightPart)[0]?.transcript_participant_id
+      ? String(reviewSpeakerIntervals(rightPart)[0].transcript_participant_id) : "__SYSTEM_NOTICE__";
+    const boundary = Number(leftPart.end_second);
+    renderSplit(String(leftPart.text || "").length, leftPart.text, rightPart.text, leftSpeaker, rightSpeaker, boundary, Number(rightPart.end_second));
+  }
+  if (candidate.candidate_type === "SPEAKER_BOUNDARY" && Number.isInteger(candidate.proposed_split_at)) {
+    proposalLabel.textContent = translate("review.proposed_split");
+    proposalLabel.hidden = false;
+    row.insertBefore(proposalLabel, splitParts);
+    const left = editor.value.slice(0, candidate.proposed_split_at).trimEnd();
+    const right = editor.value.slice(candidate.proposed_split_at).trimStart();
+    renderSplit(candidate.proposed_split_at, left, right,
+      String(candidate.proposed_left_speaker || currentSpeaker),
+      String(candidate.proposed_right_speaker || currentSpeaker));
+  }
+}
+
+async function saveInlineCandidate(candidate, editor, speaker, splitState, button) {
+  button.disabled = true;
+  try {
+    const splitText = splitState.position !== null ? `${splitState.left} ${splitState.right}` : editor.value;
+    // The text may have been edited after the split was chosen.  Recalculate
+    // the boundary from the current left part instead of sending the old
+    // selection offset.
+    const splitAt = splitState.position !== null ? splitState.left.length : null;
+    const result = await request(`/jobs/${state.review.jobId}/review-draft`, {
+      method: "PUT",
+      body: JSON.stringify({
+        candidate_id: candidate.id, status: "MODIFIED", text: splitText,
+        segment_type: speaker.value === "__SYSTEM_NOTICE__" ? "SYSTEM_NOTICE" : "SPEECH",
+        split_at: splitAt,
+        left_transcript_participant_id: speaker.value && speaker.value !== "__SYSTEM_NOTICE__" ? Number(speaker.value) : (splitState.leftSpeaker && splitState.leftSpeaker !== "__SYSTEM_NOTICE__" ? Number(splitState.leftSpeaker) : null),
+        right_transcript_participant_id: splitState.position !== null && splitState.rightSpeaker && splitState.rightSpeaker !== "__SYSTEM_NOTICE__" ? Number(splitState.rightSpeaker) : null,
+      }),
+    });
+    state.review.data = await request(`/jobs/${state.review.jobId}/review`);
+    $("#reviewMessage").textContent = "";
+    $("#reviewMessage").classList.remove("error");
+    renderReview();
+  } catch (error) {
+    $("#reviewMessage").textContent = translate("review.save_failed");
+    $("#reviewMessage").classList.add("error");
+  } finally { button.disabled = false; }
+}
+
+async function showReview(jobId) {
+  const dialog = $("#reviewViewer");
+  const message = $("#reviewMessage");
+  state.review = { jobId, index: 0, player: null, data: null };
+  message.textContent = translate("review.loading");
+  $("#reviewTranscript").replaceChildren();
+  dialog.showModal();
+  try {
+    state.review.data = await request(`/jobs/${jobId}/review`);
+    message.textContent = "";
+    if (state.review.data.media?.url) setupReviewPlayer(state.review.data.media.url);
+    renderReview();
+  } catch (error) {
+    message.textContent = error.message;
+  }
+}
+
 function renderArtifacts(artifacts) {
   const container = $("#artifactList");
   container.replaceChildren();
@@ -598,7 +975,7 @@ function buildArtifactLinks(artifacts, jobId) {
 
 function artifactCategory(artifact) {
   const type = String(artifact.artifact_type || "").toUpperCase();
-  if (type === "MD" || type.includes("TRANSCRIPT_MARKDOWN")) return "MD";
+  if (type === "MD" || type.endsWith("_MD") || type.includes("TRANSCRIPT_MARKDOWN")) return "MD";
   if (type === "VTT" || type.endsWith("_VTT")) return "VTT";
   return type;
 }
@@ -625,7 +1002,7 @@ function buildArtifactLink(artifact, jobId) {
 function artifactDisplayName(artifact) {
   const category = artifactCategory(artifact);
   const type = String(artifact.artifact_type || "").toUpperCase();
-  if (type === "REVIEWED_TRANSCRIPT_MARKDOWN") return translate("artifacts.transcript");
+  if (type === "REVIEWED_TRANSCRIPT_MARKDOWN" || type === "REVIEWED_DRAFT_MD") return translate("artifacts.transcript");
   if (type === "AUTOMATIC_TRANSCRIPT_MARKDOWN") return translate("artifacts.transcript_automatic");
   if (category === "MD") return `${translate("artifacts.transcript_version")} #${artifact.id}`;
   if (category === "VTT") return translate("artifacts.vtt");
@@ -645,7 +1022,7 @@ function populateArtifactViewer(artifacts, jobId) {
   const ordered = [...artifacts].sort((left, right) => {
     const rank = (artifact) => {
       const type = String(artifact.artifact_type || "").toUpperCase();
-      if (type === "REVIEWED_TRANSCRIPT_MARKDOWN") return 0;
+      if (type === "REVIEWED_TRANSCRIPT_MARKDOWN" || type === "REVIEWED_DRAFT_MD") return 0;
       if (type === "AUTOMATIC_TRANSCRIPT_MARKDOWN") return 1;
       if (artifactCategory(artifact) === "MD") return 2;
       if (artifactCategory(artifact) === "VTT") return 3;
@@ -762,6 +1139,10 @@ $("#participantReviewClose").addEventListener("click", () => {
 });
 $("#participantReviewSave").addEventListener("click", () => saveParticipantReview());
 $("#participantReviewViewer").addEventListener("close", destroyParticipantPlayers);
+$("#reviewClose").addEventListener("click", () => $("#reviewViewer").close());
+$("#reviewPrevious").addEventListener("click", () => { if (state.review?.index > 0) { state.review.index -= 1; renderReview(); } });
+$("#reviewNext").addEventListener("click", () => { if (state.review && state.review.index < state.review.data.candidates.length - 1) { state.review.index += 1; renderReview(); } });
+$("#reviewViewer").addEventListener("close", destroyReviewPlayer);
 
 $("#artifactViewerClose").addEventListener("click", () => $("#artifactViewer").close());
 $("#artifactViewerDownload").addEventListener("click", async () => {
@@ -858,6 +1239,14 @@ function renderHistory() {
       participantsButton.textContent = translate("history.participants");
       participantsButton.addEventListener("click", () => showParticipantReview(job.id));
       actions.appendChild(participantsButton);
+    }
+    if (job.status === "IN_REVIEW") {
+      const reviewButton = document.createElement("button");
+      reviewButton.type = "button";
+      reviewButton.className = "results-button history-participant-action";
+      reviewButton.textContent = translate("history.review");
+      reviewButton.addEventListener("click", () => showReview(job.id));
+      actions.appendChild(reviewButton);
     }
     item.appendChild(actions);
     container.appendChild(item);

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="stylesheet" href="./assets/app.css?v=13" />
+    <link rel="stylesheet" href="./assets/app.css?v=23" />
     <title>ERR2TEXT</title>
   </head>
   <body>
@@ -121,7 +121,28 @@
         <button id="participantReviewSave" type="button" data-i18n="participants.save"></button>
       </div>
     </dialog>
+    <dialog id="reviewViewer" class="review-viewer" aria-modal="true">
+      <div class="job-viewer-head">
+        <h2 data-i18n="review.title"></h2>
+        <button id="reviewClose" class="secondary-button" type="button" data-i18n="artifacts.close"></button>
+      </div>
+      <p id="reviewMessage" class="message" role="status" aria-live="polite"></p>
+      <div id="reviewProgress" class="review-progress"></div>
+      <div class="review-layout">
+        <aside class="review-nav">
+          <button id="reviewPrevious" class="secondary-button" type="button" data-i18n="review.previous"></button>
+          <button id="reviewNext" class="secondary-button" type="button" data-i18n="review.next"></button>
+        </aside>
+        <div class="review-main">
+          <div class="review-player-wrap">
+            <video id="reviewVideo" class="review-video" controls preload="metadata" playsinline></video>
+            <p id="reviewPlayerMessage" class="speaker-player-message" role="status"></p>
+          </div>
+          <div id="reviewTranscript" class="review-transcript"></div>
+        </div>
+      </div>
+    </dialog>
     <script src="./assets/vendor/hls-1.6.13.min.js" defer></script>
-    <script src="./assets/app.js?v=45" defer></script>
+    <script src="./assets/app.js?v=67" defer></script>
   </body>
 </html>

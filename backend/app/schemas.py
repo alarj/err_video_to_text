@@ -52,3 +52,14 @@ class SpeakerMapping(BaseModel):
 class ParticipantReviewRequest(BaseModel):
     mappings: list[SpeakerMapping] = Field(default_factory=list)
     confirm: bool = False
+
+
+class ReviewCandidateRequest(BaseModel):
+    candidate_id: int = Field(gt=0)
+    status: Literal["PENDING", "ACCEPTED", "REJECTED", "MODIFIED"]
+    decision: str | None = Field(default=None, max_length=30)
+    text: str | None = Field(default=None, max_length=4000)
+    segment_type: Literal["SPEECH", "SYSTEM_NOTICE"] | None = None
+    split_at: int | None = Field(default=None, gt=0)
+    left_transcript_participant_id: int | None = Field(default=None, gt=0)
+    right_transcript_participant_id: int | None = Field(default=None, gt=0)
