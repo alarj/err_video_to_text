@@ -1344,7 +1344,13 @@ async function showJobHistory(jobId) {
     events.forEach((event, index) => {
       const next = events[index + 1];
       const start = new Date(event.event_at);
-      const duration = next ? formatDuration(new Date(next.event_at) - start) : "";
+      // Use the activity's real end time.  The last activity is often still
+      // running, so show its duration up to now instead of leaving the cell
+      // empty.  The next activity remains a fallback for older event records.
+      const end = event.finished_at
+        ? new Date(event.finished_at)
+        : (next ? new Date(next.event_at) : new Date());
+      const duration = formatDuration(end - start);
       const row = document.createElement("tr");
       [statusLabel(event.status), formatLocalDate(event.event_at), duration, runResultLabel(event.run_status)].forEach((value) => {
         const cell = document.createElement("td");
