@@ -649,12 +649,20 @@ function renderReview() {
   const transcript = $("#reviewTranscript");
   transcript.replaceChildren();
   const candidateBySegment = new Map(candidates.map((item) => [item.segment.id, item]));
+  const candidatePartOwners = new Map();
+  candidates.forEach((item) => {
+    (item.reviewed_segments || []).forEach((part) => {
+      if (part.id !== item.segment.id) candidatePartOwners.set(part.id, item);
+    });
+  });
   const activeSplitIds = new Set(
     (candidate.reviewed_segments || []).map((entry) => entry.id).filter((id) => id !== candidate.segment.id),
   );
   (review.data.segments || []).forEach((segment) => {
     if (activeSplitIds.has(segment.id)) return;
     const item = candidateBySegment.get(segment.id);
+    const partOwner = candidatePartOwners.get(segment.id);
+    if (!item && partOwner) return;
     const row = document.createElement("article");
     row.id = `review-segment-${segment.id}`;
     row.className = `review-transcript-segment ${item ? "is-candidate" : ""} ${item ? `review-status-${String(item.status || "PENDING").toLowerCase()}` : ""} ${item?.id === candidate.id ? "is-active" : ""}`;
@@ -663,24 +671,34 @@ function renderReview() {
     meta.textContent = `${formatSeconds(segment.start_second)}–${formatSeconds(segment.end_second)}`;
     if (item?.id === candidate.id) renderActiveReviewRow(row, segment, item, review, meta);
     else {
-      row.appendChild(meta);
-      const text = document.createElement("div");
-      text.className = "review-transcript-text";
-      const firstSpeaker = reviewSpeakerIntervals(segment)[0];
-      if (firstSpeaker) { const speaker = document.createElement("strong"); speaker.textContent = `${reviewSpeakerName(firstSpeaker)} `; text.appendChild(speaker); }
-      const textValue = document.createElement(item ? "mark" : "span");
-      if (item) textValue.className = "review-candidate-mark";
-      textValue.textContent = segment.text || "";
-      if (item) textValue.addEventListener("click", (event) => { event.stopPropagation(); review.index = candidates.indexOf(item); renderReview(); });
-      text.appendChild(textValue);
-      if (item) {
-        const badge = document.createElement("span");
-        badge.className = "review-status-badge";
-        badge.textContent = reviewStatusLabel(item.status);
-        text.appendChild(badge);
-        appendReviewReasonToggle(text, item.reason);
-      }
-      row.appendChild(text);
+      const parts = item?.reviewed_segments?.length
+        ? item.reviewed_segments.slice().sort((left, right) => Number(left.segment_number) - Number(right.segment_number) || Number(left.id) - Number(right.id))
+        : [segment];
+      const partList = document.createElement("div");
+      parts.forEach((part, partIndex) => {
+        const partLine = document.createElement("div");
+        partLine.className = "review-transcript-text";
+        const partMeta = document.createElement("span");
+        partMeta.className = "review-transcript-time";
+        partMeta.textContent = `${formatSeconds(part.start_second)}–${formatSeconds(part.end_second)}`;
+        partLine.appendChild(partMeta);
+        const firstSpeaker = reviewSpeakerIntervals(part)[0];
+        if (firstSpeaker) { const speaker = document.createElement("strong"); speaker.textContent = `${reviewSpeakerName(firstSpeaker)} `; partLine.appendChild(speaker); }
+        const textValue = document.createElement(item ? "mark" : "span");
+        if (item) textValue.className = "review-candidate-mark";
+        textValue.textContent = part.text || "";
+        if (item) textValue.addEventListener("click", (event) => { event.stopPropagation(); review.index = candidates.indexOf(item); renderReview(); });
+        partLine.appendChild(textValue);
+        if (item && partIndex === parts.length - 1) {
+          const badge = document.createElement("span");
+          badge.className = "review-status-badge";
+          badge.textContent = reviewStatusLabel(item.status);
+          partLine.appendChild(badge);
+          appendReviewReasonToggle(partLine, item.reason);
+        }
+        partList.appendChild(partLine);
+      });
+      row.appendChild(partList);
     }
     if (item && item.id !== candidate.id) {
       row.tabIndex = 0;
@@ -798,7 +816,7 @@ function renderActiveReviewRow(row, segment, candidate, review, meta) {
   editHint.className = "review-edit-hint";
   editHint.textContent = translate("review.edit_hint");
   function saveCurrent() {
-    saveInlineCandidate(candidate, editor, speakerSelect, splitState, save);
+    saveInlineCandidate(candidate, editor, speakerSelect, splitState, save, segment.text || "");
   }
   function markDirty() {
     save.disabled = false;
@@ -815,14 +833,18 @@ function renderActiveReviewRow(row, segment, candidate, review, meta) {
     [["left", splitState.left, splitState.leftSpeaker], ["right", splitState.right, splitState.rightSpeaker]].forEach(([side, value, selected]) => {
       const part = document.createElement("div"); part.className = "review-split-part";
       const partTime = document.createElement("span"); partTime.className = "review-split-time";
-      const proposedBoundary = Number(candidate.proposed_boundary_second);
+      const proposedBoundary = candidate.proposed_boundary_second == null
+        ? NaN
+        : Number(candidate.proposed_boundary_second);
+      const overrideBoundary = boundaryOverride == null ? NaN : Number(boundaryOverride);
       const boundary = Number.isFinite(proposedBoundary)
         ? proposedBoundary
-        : Number.isFinite(Number(boundaryOverride))
-          ? Number(boundaryOverride)
+        : Number.isFinite(overrideBoundary)
+          ? overrideBoundary
         : Number(segment.start_second) + (Number(segment.end_second) - Number(segment.start_second)) * (position / Math.max(1, editor.value.length));
       const partStart = side === "left" ? Number(segment.start_second) : boundary;
-      const partEnd = side === "left" ? boundary : (Number.isFinite(Number(endOverride)) ? Number(endOverride) : Number(segment.end_second));
+      const overrideEnd = endOverride == null ? NaN : Number(endOverride);
+      const partEnd = side === "left" ? boundary : (Number.isFinite(overrideEnd) ? overrideEnd : Number(segment.end_second));
       partTime.textContent = `${formatSeconds(partStart)}–${formatSeconds(partEnd)}`;
       const partText = document.createElement("textarea"); partText.value = value; partText.rows = value.split("\n").reduce((total, line) => total + Math.max(1, Math.ceil(line.length / 120)), 0); partText.className = "review-inline-text";
       const partSpeaker = document.createElement("select"); appendSpeakerOptions(partSpeaker, options, selected);
@@ -869,7 +891,7 @@ function renderActiveReviewRow(row, segment, candidate, review, meta) {
     const boundary = Number(leftPart.end_second);
     renderSplit(String(leftPart.text || "").length, leftPart.text, rightPart.text, leftSpeaker, rightSpeaker, boundary, Number(rightPart.end_second));
   }
-  if (candidate.candidate_type === "SPEAKER_BOUNDARY" && Number.isInteger(candidate.proposed_split_at)) {
+  if (candidate.status === "PENDING" && candidate.candidate_type === "SPEAKER_BOUNDARY" && Number.isInteger(candidate.proposed_split_at)) {
     proposalLabel.textContent = translate("review.proposed_split");
     proposalLabel.hidden = false;
     row.insertBefore(proposalLabel, splitParts);
@@ -881,21 +903,37 @@ function renderActiveReviewRow(row, segment, candidate, review, meta) {
   }
 }
 
-async function saveInlineCandidate(candidate, editor, speaker, splitState, button) {
+async function saveInlineCandidate(candidate, editor, speaker, splitState, button, originalText = "") {
   button.disabled = true;
   try {
-    const splitText = splitState.position !== null ? `${splitState.left} ${splitState.right}` : editor.value;
     // The text may have been edited after the split was chosen.  Recalculate
     // the boundary from the current left part instead of sending the old
     // selection offset.
     const splitAt = splitState.position !== null ? splitState.left.length : null;
+    const proposalAccepted = candidate.candidate_type === "SPEAKER_BOUNDARY"
+      && Number.isInteger(candidate.proposed_split_at)
+      && splitAt === candidate.proposed_split_at
+      && splitState.left === editor.value.slice(0, splitAt).trimEnd()
+      && splitState.right === editor.value.slice(splitAt).trimStart()
+      && String(splitState.leftSpeaker || "") === String(candidate.proposed_left_speaker || "")
+      && String(splitState.rightSpeaker || "") === String(candidate.proposed_right_speaker || "");
+    const unchanged = splitState.position === null && editor.value === originalText;
+    const status = proposalAccepted ? "ACCEPTED" : (unchanged ? "REJECTED" : "MODIFIED");
+    // For an untouched proposal keep the exact source text (including
+    // whitespace/newlines).  Modified splits continue to use the edited
+    // parts joined with a single separator.
+    const splitText = status === "ACCEPTED"
+      ? editor.value
+      : (splitState.position !== null ? `${splitState.left} ${splitState.right}` : editor.value);
     const result = await request(`/jobs/${state.review.jobId}/review-draft`, {
       method: "PUT",
       body: JSON.stringify({
-        candidate_id: candidate.id, status: "MODIFIED", text: splitText,
+        candidate_id: candidate.id, status, text: status === "REJECTED" ? null : splitText,
         segment_type: speaker.value === "__SYSTEM_NOTICE__" ? "SYSTEM_NOTICE" : "SPEECH",
         split_at: splitAt,
-        left_transcript_participant_id: speaker.value && speaker.value !== "__SYSTEM_NOTICE__" ? Number(speaker.value) : (splitState.leftSpeaker && splitState.leftSpeaker !== "__SYSTEM_NOTICE__" ? Number(splitState.leftSpeaker) : null),
+        left_transcript_participant_id: splitState.position !== null
+          ? (splitState.leftSpeaker && splitState.leftSpeaker !== "__SYSTEM_NOTICE__" ? Number(splitState.leftSpeaker) : null)
+          : (speaker.value && speaker.value !== "__SYSTEM_NOTICE__" ? Number(speaker.value) : null),
         right_transcript_participant_id: splitState.position !== null && splitState.rightSpeaker && splitState.rightSpeaker !== "__SYSTEM_NOTICE__" ? Number(splitState.rightSpeaker) : null,
       }),
     });

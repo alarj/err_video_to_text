@@ -481,6 +481,17 @@ Kandidaadi olekud on:
 - `REJECTED` — ettepanek lükati tagasi;
 - `MODIFIED` — kasutaja salvestas teistsuguse paranduse.
 
+Ülevaatuse UI värviloogika ei väljenda otsuse sisu, vaid ülevaatuse lõpetatust:
+
+- `PENDING` on kollase taustaga — kasutaja pole kandidaati veel käsitlenud;
+- `ACCEPTED`, `REJECTED` ja `MODIFIED` on rohelise taustaga — kasutaja on
+  kandidaadi üle vaadanud ja otsus on salvestatud.
+
+Kõigi nelja oleku puhul jäävad kasutajaliidese paigutus, nuppude arv ja
+kasutaja tegevuste üldine vorm samaks. Olekut eristab tekstiline märgis ning
+ülevaatamata/ülevaadatud taustavärv; roheline ei tähenda, et süsteemi ettepanek
+oli õige, vaid üksnes seda, et kandidaat on läbi vaadatud.
+
 „Salvesta muudatused” uuendab sama `REVIEWED_DRAFT` versiooni. Parandatud
 tekst, poolitused ja kõnelejaseosed salvestatakse transkriptsioonisegmentidesse
 ja nende kõnelejaseostesse. Kandidaadi kirjesse ei dubleerita parandatud

@@ -502,9 +502,9 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
             if process[0] != "IN_REVIEW":
                 raise HTTPException(status_code=409, detail="Process is not in review")
             decision = request.decision or request.status
-            if request.status == "MODIFIED":
+            if request.status in {"ACCEPTED", "MODIFIED"}:
                 cursor.execute(
-                    """SELECT rc.transcript_segment_id
+                    """SELECT rc.transcript_segment_id, rc.candidate_type
                          FROM review_candidates rc
                          JOIN transcript_segments s ON s.id = rc.transcript_segment_id
                          JOIN transcript_versions v ON v.id = s.transcript_version_id
@@ -517,6 +517,7 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
                 if candidate_row is None:
                     raise HTTPException(status_code=404, detail="Review candidate not found")
                 source_segment_id = int(candidate_row[0])
+                candidate_type = str(candidate_row[1])
                 cursor.execute(
                     """SELECT s.id, s.start_second, s.end_second, s.text, s.source_segment_id,
                               s.segment_number
@@ -543,6 +544,18 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
                     {"segment_id": int(segment_id)},
                 )
                 old_speakers = cursor.fetchall()
+
+                if request.status == "ACCEPTED":
+                    # ACCEPTED is reserved for an unchanged system proposal.
+                    # Keep the UI contract small, but reject malformed or
+                    # fabricated acceptance requests at the API boundary.
+                    if candidate_type != "SPEAKER_BOUNDARY":
+                        raise HTTPException(status_code=422, detail="Only speaker-boundary proposals can be accepted")
+                    if request.split_at is None or request.left_transcript_participant_id is None or request.right_transcript_participant_id is None:
+                        raise HTTPException(status_code=422, detail="Accepted proposal must include both split speakers")
+                    speaker_ids = {int(row[1]) for row in old_speakers}
+                    if request.left_transcript_participant_id not in speaker_ids or request.right_transcript_participant_id not in speaker_ids:
+                        raise HTTPException(status_code=422, detail="Accepted proposal uses an unknown speaker")
 
                 def restore_or_insert_speaker(target_id: int, participant_id: int, target_start: float, target_end: float, confidence: float) -> None:
                     """Reuse a soft-deleted relation before inserting a new one.
