@@ -255,6 +255,7 @@ dd { margin: 0; line-height: 1.45; overflow-wrap: anywhere; }
 .review-viewer { display: flex; flex-direction: column; width: min(1200px, 94vw); height: min(900px, 94vh); padding: 20px; border: 0; border-radius: 14px; background: var(--funo-card); color: var(--funo-ink); overflow: hidden; box-sizing: border-box; }
 .review-viewer::backdrop { background: rgb(15 23 42 / 65%); }
 .review-progress { flex: 0 0 auto; margin-top: 8px; color: var(--funo-muted); font-size: 14px; }
+.review-unresolved-link { margin: 0; padding: 0; border: 0; color: inherit; background: transparent; font: inherit; text-decoration: underline; cursor: pointer; }
 .review-layout { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 10px; flex: 1 1 auto; min-height: 0; margin-top: 10px; }
 .review-nav { display: flex; flex-direction: column; align-items: center; gap: 8px; padding-top: 8px; }
 .review-nav button { width: 36px; min-width: 36px; height: 36px; padding: 0; font-size: 24px; line-height: 1; }

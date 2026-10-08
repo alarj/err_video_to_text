@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timezone
+from decimal import Decimal, ROUND_HALF_UP
 from hashlib import sha256
 import json
 import os
@@ -25,6 +26,13 @@ from err2text.errors import PipelineError
 from err2text.sentence_boundary_review.runner import suggest_sentence_split
 
 router = APIRouter()
+
+_SECOND_QUANTUM = Decimal("0.001")
+
+
+def _normalize_second(value: object) -> Decimal:
+    """Match the NUMBER(12,3) precision used by stored time values."""
+    return Decimal(str(value)).quantize(_SECOND_QUANTUM, rounding=ROUND_HALF_UP)
 
 
 def _utc_iso(value: datetime | None) -> str | None:
@@ -564,6 +572,10 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
                     so soft-deleting and immediately reinserting the same relation
                     would raise ORA-00001.
                     """
+                    normalized_start = _normalize_second(target_start)
+                    normalized_end = _normalize_second(target_end)
+                    if normalized_end < normalized_start:
+                        return
                     cursor.execute(
                         """SELECT id FROM transcript_segment_speakers
                             WHERE transcript_segment_id = :segment_id
@@ -573,7 +585,7 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
                             ORDER BY CASE WHEN end_date IS NULL THEN 0 ELSE 1 END, id
                             FETCH FIRST 1 ROW ONLY""",
                         {"segment_id": target_id, "participant_id": participant_id,
-                         "start_second": target_start, "end_second": target_end},
+                         "start_second": normalized_start, "end_second": normalized_end},
                     )
                     existing = cursor.fetchone()
                     if existing is not None:
@@ -589,7 +601,7 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
                         (transcript_segment_id, transcript_participant_id, start_second, end_second, confidence)
                         VALUES (:segment_id, :participant_id, :start_second, :end_second, :confidence)""",
                         {"segment_id": target_id, "participant_id": participant_id,
-                         "start_second": target_start, "end_second": target_end, "confidence": confidence})
+                         "start_second": normalized_start, "end_second": normalized_end, "confidence": confidence})
 
                 if request.split_at is not None:
                     split_at = int(request.split_at)
@@ -599,12 +611,17 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
                     if not left_text or not right_text:
                         raise HTTPException(status_code=422, detail="Both split parts must contain text")
                     ratio = split_at / len(new_text)
-                    boundary = float(start_second) + (float(end_second) - float(start_second)) * ratio
+                    normalized_start = _normalize_second(start_second)
+                    normalized_end = _normalize_second(end_second)
+                    boundary = _normalize_second(
+                        normalized_start
+                        + (normalized_end - normalized_start) * Decimal(split_at) / Decimal(len(new_text))
+                    )
                     cursor.execute("SELECT transcript_version_id, segment_number, source_segment_id FROM transcript_segments WHERE id = :segment_id", {"segment_id": int(segment_id)})
                     version_number_row = cursor.fetchone()
                     existing_followup = next(
                         (item for item in reviewed_segments[1:]
-                         if abs(float(item[1]) - float(end_second)) < 0.001),
+                         if _normalize_second(item[1]) == normalized_end),
                         None,
                     )
                     if existing_followup is None:
@@ -667,16 +684,28 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
                              "segment_type": new_type, "source_segment_id": int(version_number_row[2] or segment_id), "new_id": new_segment_var},
                         )
                         new_segment_id = int(new_segment_var.getvalue()[0])
+                    # Build the target relations first and deduplicate them
+                    # before inserting. Several short diarization intervals
+                    # can collapse to the same clipped relation at a split
+                    # boundary, while the database key permits that relation
+                    # only once.
+                    pending_relations: dict[tuple[int, int, Decimal, Decimal], tuple[int, int, Decimal, Decimal, float]] = {}
                     for row in old_speakers:
                         cursor.execute("UPDATE transcript_segment_speakers SET end_date = SYSDATE, last_updated = SYSTIMESTAMP WHERE id = :id AND end_date IS NULL", {"id": int(row[0])})
                         left_pid = request.left_transcript_participant_id or int(row[1])
                         right_pid = request.right_transcript_participant_id or int(row[1])
+                        speaker_start = _normalize_second(row[2])
+                        speaker_end = _normalize_second(row[3])
                         for target_id, target_start, target_end, participant_id in (
-                            (int(segment_id), row[2], min(float(row[3]), boundary), left_pid),
-                            (new_segment_id, max(float(row[2]), boundary), row[3], right_pid),
+                            (int(segment_id), speaker_start, min(speaker_end, boundary), left_pid),
+                            (new_segment_id, max(speaker_start, boundary), speaker_end, right_pid),
                         ):
                             if target_end >= target_start:
-                                restore_or_insert_speaker(int(target_id), int(participant_id), float(target_start), float(target_end), float(row[4]))
+                                relation = (int(target_id), int(participant_id), target_start, target_end, float(row[4]))
+                                key = (relation[0], relation[1], relation[2], relation[3])
+                                pending_relations[key] = relation
+                    for target_id, participant_id, target_start, target_end, confidence in pending_relations.values():
+                        restore_or_insert_speaker(target_id, participant_id, target_start, target_end, confidence)
                 else:
                     # Removing a previous split must close every active sibling
                     # belonging to the same automatic source segment.
@@ -701,7 +730,7 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
                         cursor.execute("UPDATE transcript_segment_speakers SET end_date = SYSDATE, last_updated = SYSTIMESTAMP WHERE transcript_segment_id = :segment_id AND end_date IS NULL", {"segment_id": int(segment_id)})
                     elif request.left_transcript_participant_id is not None:
                         cursor.execute("UPDATE transcript_segment_speakers SET end_date = SYSDATE, last_updated = SYSTIMESTAMP WHERE transcript_segment_id = :segment_id AND end_date IS NULL", {"segment_id": int(segment_id)})
-                        restore_or_insert_speaker(int(segment_id), int(request.left_transcript_participant_id), float(start_second), float(end_second), 1.0)
+                        restore_or_insert_speaker(int(segment_id), int(request.left_transcript_participant_id), _normalize_second(start_second), _normalize_second(end_second), 1.0)
             cursor.execute(
                 """UPDATE review_candidates rc
                       SET status = :status, decision = :decision,

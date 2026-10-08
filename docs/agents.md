@@ -22,6 +22,23 @@
 - Ära muuda kõrvalisi faile ega paranda mitteseotud probleeme.
 - Kõrge mõjuga otsuste puhul eelista juurpõhjuse parandamist, mitte lokaalseid ümberkäike.
 
+### Git ja juurutus
+
+- `git commit` vajab kasutaja iga töökorra jaoks eraldi luba.
+- `git push` vajab kasutaja iga töökorra jaoks eraldi luba.
+- Kuna rakendus töötab samas serveris, piisab testimiseks koodi muutmisest ning
+  vajaliku konteineri ehitamisest ja taaskäivitamisest; commit'i ega push'i ei
+  tohi eeldada juurutuse eeltingimusena.
+
+### Testimine ja andmete muutmine
+
+- Ilma kasutaja eraldi loata ei tohi käivitada teste ega kontrollskripte, mis
+  kirjutavad andmebaasi või muudavad olemasolevaid andmeid.
+- Ilma sellise loata on lubatud ainult dry-run'id, lugemispäringud ja muud
+  mitte-muteerivad kontrollid.
+- Kui kontroll eeldab andmete muutmist, tuleb enne peatuda ja küsida kasutajalt
+  eraldi luba.
+
 ## 4. Vea käsitlemise juhis
 
 - Vea või regressiooni korral uuri esmalt juurpõhjust.

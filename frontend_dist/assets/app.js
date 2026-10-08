@@ -645,7 +645,25 @@ function renderReview() {
     return;
   }
   const pendingCount = candidates.filter((item) => item.status === "PENDING").length;
-  $("#reviewProgress").textContent = `${review.index + 1} / ${candidates.length} · ${reviewStatusLabel(candidate.status)} · ${pendingCount} ${translate("review.unresolved")}`;
+  const progress = $("#reviewProgress");
+  progress.replaceChildren(document.createTextNode(`${review.index + 1} / ${candidates.length} · ${reviewStatusLabel(candidate.status)} · `));
+  if (pendingCount > 0) {
+    const unresolved = document.createElement("button");
+    unresolved.type = "button";
+    unresolved.className = "review-unresolved-link";
+    unresolved.textContent = `${pendingCount} ${translate("review.unresolved")}`;
+    unresolved.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const firstPending = candidates.findIndex((item) => item.status === "PENDING");
+      if (firstPending >= 0) {
+        review.index = firstPending;
+        renderReview();
+      }
+    });
+    progress.appendChild(unresolved);
+  } else {
+    progress.appendChild(document.createTextNode(`0 ${translate("review.unresolved")}`));
+  }
   const transcript = $("#reviewTranscript");
   transcript.replaceChildren();
   const candidateBySegment = new Map(candidates.map((item) => [item.segment.id, item]));
@@ -694,7 +712,7 @@ function renderReview() {
           badge.className = "review-status-badge";
           badge.textContent = reviewStatusLabel(item.status);
           partLine.appendChild(badge);
-          appendReviewReasonToggle(partLine, item.reason);
+          appendReviewReasonToggle(partLine, item.id, item.reason);
         }
         partList.appendChild(partLine);
       });
@@ -765,7 +783,7 @@ function appendSpeakerOptions(select, options, currentValue) {
   select.value = currentValue || "";
 }
 
-function appendReviewReasonToggle(container, reason) {
+function appendReviewReasonToggle(container, candidateId, reason) {
   const toggle = document.createElement("button");
   toggle.type = "button";
   toggle.className = "review-reason-toggle";
@@ -775,7 +793,7 @@ function appendReviewReasonToggle(container, reason) {
   const details = document.createElement("span");
   details.className = "review-reason-details";
   details.hidden = true;
-  details.textContent = reason || "";
+  details.textContent = `${candidateId}: ${reason || ""}`;
   toggle.addEventListener("click", (event) => {
     event.stopPropagation();
     details.hidden = !details.hidden;
@@ -874,7 +892,7 @@ function renderActiveReviewRow(row, segment, candidate, review, meta) {
   speakerSelect.addEventListener("change", () => { if (speakerSelect.value === "__SYSTEM_NOTICE__") speakerSelect.dataset.segmentType = "SYSTEM_NOTICE"; else speakerSelect.dataset.segmentType = "SPEECH"; markDirty(); });
   save.addEventListener("click", saveCurrent);
   controls.append(splitButton, splitReset, save);
-  appendReviewReasonToggle(controls, candidate.reason);
+  appendReviewReasonToggle(controls, candidate.id, candidate.reason);
   splitParts.hidden = true;
   proposalLabel.hidden = true;
   splitButton.hidden = false;
