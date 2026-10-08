@@ -409,11 +409,21 @@ Oracle’i kasutamine ORDS REST-vahekihi kaudu ei ole nõue. FastAPI ja worker v
 
 ### ERR-i olemasolevad allikad
 
-ERR-i videod kasutavad MPEG-DASH voogusid. Esimese testsaate puhul on teada järgmised näited:
+ERR-i videod võivad kasutada nii MPEG-DASH kui ka HLS voogusid. Esimese testsaate puhul on teada järgmised näited:
 
 - VOD-identifikaator: `b4eb8107755029f5c6e92f8cfcf14911`;
 - DASH manifest: <https://vod.err.ee/dash/vod/b4eb8107755029f5c6e92f8cfcf14911/2/v/manifest.mpd>;
 - ERR-i automaatsubtiitrid: <https://vod.err.ee/dash/vod/b4eb8107755029f5c6e92f8cfcf14911/2/v/sub-f4.vtt>.
+
+Kõik ERR-i videod ei kasuta sama URL-i teekonda. Lisaks kujule
+`/hls/vod/{media_id}/{version}/...` või `/dash/vod/{media_id}/{version}/...`
+võib artikkel viidata näiteks kujule
+`/hls/etvsaated/{media_id}/{version}/...`. `etvsaated` on ERR-i meediapuu
+teine haru, mitte põhjus käsitleda allikat puuduva videona. Resolver peab
+toetama mõlemat URL-i perekonda ning säilitama valitud meedia tegeliku
+kanonilise URL-i; `etvsaated` URL-i ei tohi meelevaldselt ümber kirjutada
+`vod` URL-iks. HLS-i `nosub` variant on ainult subtiitriteta meediavoog ja
+ei tõenda, et ERR-il puudub eraldi VTT-allikas.
 
 VTT annab juba ERR-i „Heli tekstiks” transkriptsiooni ja ajamärgid, kuid ei sisalda kõneleja infot. Seetõttu on MVP põhimõte kasutada olemasolevat VTT-d põhitekstina ning teha audio põhjal ainult kõnelejate diarization. See säästab GPU-ta serveris oluliselt ressursse võrreldes terve saate Whisperiga uuesti transkribeerimisega.
 
@@ -425,6 +435,22 @@ MVP resolver peab töötama kaheastmeliselt:
 
 1. klassifitseerima sisendi vähemalt `ERR_ARTICLE`, `JUPITER_MEDIA`, `ERR_ARCHIVE_MEDIA` või `DIRECT_TECHNICAL_URL` tüübiks;
 2. artikli puhul leidma ERR-i lehe või selle taustapäringu metadata seest seotud meedia identifikaatori/URL-i ning alles siis andma selle `yt-dlp`/UglyERR-ile või kontrollitud DASH/VTT allikate hankijale.
+
+Subtiitrite leidmine peab olema meediast eraldi lahendatav. Resolver ei tohi
+eeldada, et VTT on alati HLS-i või DASH-i URL-i põhjal tuletatav fail nagu
+`.../dash/vod/.../sub-f4.vtt`. ERR-i artikli metadata API võib anda meedia
+kirje sees eraldi `subtitles[].src` URL-i, näiteks:
+
+```text
+https://services.err.ee/subtitles/file/439345/439345_VA.vtt
+```
+
+Kui selline otsene VTT-allikas on metadata’s olemas, tuleb kasutada seda ja
+salvestada see `resolver.json`-i kasutatud VTT URL-ina. Kui otsest URL-i ei
+ole, võib kasutada kontrollitud URL-i tuletamist ainult selle konkreetse ERR-i
+meediaperekonna dokumenteeritud reegli alusel. VTT-allika puudumine peab andma
+selge subtiitrite hankimise vea, mitte eksitavat teadet, et artiklis puudub
+video.
 
 Resolver peab koos töö tulemusega salvestama algse kasutaja URL-i, leitud kanonilise meedia URL-i/VOD-identifikaatori ja kasutatud VTT/audio URL-id. Vea korral peab API/CLI eristama vähemalt olukordi `UNSUPPORTED_URL`, `ARTICLE_WITHOUT_MEDIA`, `MEDIA_NOT_FOUND`, `DRM_PROTECTED` ja `DOWNLOAD_FAILED`; kasutajat ei tohi suunata käsitsi DevToolsi avama või otsemeedia URL-i otsima.
 
