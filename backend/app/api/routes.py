@@ -35,6 +35,43 @@ def _normalize_second(value: object) -> Decimal:
     return Decimal(str(value)).quantize(_SECOND_QUANTUM, rounding=ROUND_HALF_UP)
 
 
+def _normalize_review_text(value: object) -> str:
+    """Compare review text independently of whitespace-only formatting."""
+    return " ".join(str(value or "").split())
+
+
+def _logical_neighbor_ids(ordered_ids: list[int], group_ids: set[int]) -> tuple[int | None, int | None]:
+    """Return the nearest segments outside a candidate's complete reviewed group."""
+    group_positions = [index for index, segment_id in enumerate(ordered_ids) if segment_id in group_ids]
+    if not group_positions:
+        return None, None
+    first = min(group_positions)
+    last = max(group_positions)
+    previous_id = ordered_ids[first - 1] if first > 0 else None
+    next_id = ordered_ids[last + 1] if last + 1 < len(ordered_ids) else None
+    return previous_id, next_id
+
+
+def _validate_logical_neighbor_target(
+    relative_position: str,
+    target_segment_id: int,
+    previous_id: int | None,
+    next_id: int | None,
+) -> None:
+    expected_target_id = previous_id if relative_position == "PREVIOUS" else next_id
+    if expected_target_id is None or int(target_segment_id) != expected_target_id:
+        raise HTTPException(status_code=422, detail="Target segment is not an immediate candidate neighbor")
+
+
+def _validate_review_target(request: ReviewCandidateRequest) -> None:
+    """Repeated edits of a reviewed child are always a modified decision."""
+    if request.reviewed_segment_id is not None and request.status != "MODIFIED":
+        raise HTTPException(
+            status_code=422,
+            detail="reviewed_segment_id edits require status MODIFIED",
+        )
+
+
 def _utc_iso(value: datetime | None) -> str | None:
     if value is None:
         return None
@@ -398,6 +435,32 @@ def get_review(job_id: int) -> dict[str, object]:
                     "confidence": float(row[7]),
                 })
         cursor.execute(
+            """SELECT sm.transcript_segment_id, sm.trigger_candidate_id,
+                      sm.relative_position, sm.change_type, sm.status
+                 FROM transcript_segment_modifications sm
+                 JOIN transcript_segments s ON s.id = sm.transcript_segment_id
+                WHERE s.transcript_version_id = :version_id
+                  AND sm.end_date IS NULL
+                ORDER BY sm.transcript_segment_id, sm.id""",
+            {"version_id": version_id},
+        )
+        modifications_by_segment: dict[int, dict[str, object]] = {}
+        for row in cursor.fetchall():
+            segment_id = int(row[0])
+            metadata = modifications_by_segment.setdefault(
+                segment_id,
+                {
+                    "status": row[4],
+                    "trigger_candidate_id": int(row[1]),
+                    "relative_position": row[2],
+                    "change_types": [],
+                },
+            )
+            metadata["change_types"].append(row[3])
+        for segment in segments:
+            if int(segment["id"]) in modifications_by_segment:
+                segment["user_modification"] = modifications_by_segment[int(segment["id"])]
+        cursor.execute(
             """SELECT rc.id, rc.transcript_segment_id, rc.candidate_type, rc.reason,
                       rc.status, rc.decision, rc.decision_at
                  FROM review_candidates rc
@@ -438,7 +501,12 @@ def get_review(job_id: int) -> dict[str, object]:
             segment = reviewed_group[0] if reviewed_group else None
             if segment is None:
                 continue
-            index = segments.index(segment)
+            reviewed_group_ids = {int(item["id"]) for item in reviewed_group}
+            previous_id, next_id = _logical_neighbor_ids(
+                [int(item["id"]) for item in segments], reviewed_group_ids,
+            )
+            previous_segment = segment_by_id.get(previous_id) if previous_id is not None else None
+            next_segment = segment_by_id.get(next_id) if next_id is not None else None
             proposal = None
             if row[2] == "SPEAKER_BOUNDARY":
                 proposal = suggest_sentence_split(
@@ -466,8 +534,8 @@ def get_review(job_id: int) -> dict[str, object]:
                 "decision_at": _utc_iso(row[6]),
                 "segment": segment,
                 "reviewed_segments": reviewed_group,
-                "previous": segments[index - 1] if index > 0 else None,
-                "next": segments[index + 1] if index + 1 < len(segments) else None,
+                "previous": previous_segment,
+                "next": next_segment,
                 "proposed_boundary_second": proposal.get("boundary_second") if proposal else None,
                 "proposed_split_at": proposal.get("split_at") if proposal else None,
                 "proposed_left_speaker": proposal.get("from_transcript_participant_id") if proposal else None,
@@ -510,7 +578,12 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
             if process[0] != "IN_REVIEW":
                 raise HTTPException(status_code=409, detail="Process is not in review")
             decision = request.decision or request.status
-            if request.status in {"ACCEPTED", "MODIFIED"}:
+            is_neighbor_edit = request.target_segment_id is not None
+            is_reviewed_segment_edit = request.reviewed_segment_id is not None
+            _validate_review_target(request)
+            if is_neighbor_edit and is_reviewed_segment_edit:
+                raise HTTPException(status_code=422, detail="Choose either a neighbor or a reviewed segment")
+            if is_neighbor_edit or request.status in {"ACCEPTED", "MODIFIED"}:
                 cursor.execute(
                     """SELECT rc.transcript_segment_id, rc.candidate_type
                          FROM review_candidates rc
@@ -542,6 +615,68 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
                     raise HTTPException(status_code=409, detail="Reviewed segment not found")
                 segment = reviewed_segments[0]
                 segment_id, start_second, end_second, old_text, source_id, segment_number = segment
+                neighbor_target_ids: list[int] = []
+                if is_reviewed_segment_edit:
+                    segment = next((item for item in reviewed_segments if int(item[0]) == int(request.reviewed_segment_id)), None)
+                    if segment is None:
+                        raise HTTPException(status_code=422, detail="Reviewed segment is not part of this candidate")
+                    segment_id, start_second, end_second, old_text, source_id, segment_number = segment
+                    # A repeated split targets exactly this child. Other
+                    # already-created children must remain untouched.
+                    reviewed_segments = [segment]
+                if is_neighbor_edit:
+                    if request.relative_position is None:
+                        raise HTTPException(status_code=422, detail="relative_position is required for a neighbor edit")
+                    cursor.execute(
+                        """SELECT id, segment_number
+                             FROM transcript_segments
+                            WHERE transcript_version_id = (SELECT id FROM transcript_versions
+                                                             WHERE process_id = :process_id
+                                                               AND version_type = 'REVIEWED_DRAFT'
+                                                               AND end_date IS NULL)
+                              AND end_date IS NULL
+                            ORDER BY segment_number, id""",
+                        {"process_id": job_id},
+                    )
+                    ordered_segments = cursor.fetchall()
+                    group_ids = {int(row[0]) for row in reviewed_segments}
+                    previous_id, next_id = _logical_neighbor_ids(
+                        [int(row[0]) for row in ordered_segments], group_ids,
+                    )
+                    _validate_logical_neighbor_target(
+                        request.relative_position,
+                        int(request.target_segment_id),
+                        previous_id,
+                        next_id,
+                    )
+                    cursor.execute(
+                        """SELECT s.id, s.start_second, s.end_second, s.text, s.source_segment_id,
+                                  s.segment_number
+                             FROM transcript_segments s
+                             JOIN transcript_versions v ON v.id = s.transcript_version_id
+                            WHERE s.id = :segment_id AND s.end_date IS NULL
+                              AND v.process_id = :process_id AND v.version_type = 'REVIEWED_DRAFT'
+                              AND v.end_date IS NULL""",
+                        {"segment_id": int(request.target_segment_id), "process_id": job_id},
+                    )
+                    target_segment = cursor.fetchone()
+                    if target_segment is None:
+                        raise HTTPException(status_code=404, detail="Neighbor segment not found")
+                    segment = target_segment
+                    segment_id, start_second, end_second, old_text, source_id, segment_number = segment
+                    neighbor_target_ids.append(int(segment_id))
+                    cursor.execute(
+                        """SELECT s.id, s.start_second, s.end_second, s.text, s.source_segment_id,
+                                  s.segment_number
+                             FROM transcript_segments s
+                            WHERE s.transcript_version_id = (SELECT transcript_version_id FROM transcript_segments WHERE id = :segment_id)
+                              AND s.end_date IS NULL
+                              AND (s.id = :segment_id OR s.source_segment_id =
+                                   (SELECT COALESCE(source_segment_id, id) FROM transcript_segments WHERE id = :segment_id))
+                            ORDER BY s.segment_number, s.id""",
+                        {"segment_id": int(segment_id)},
+                    )
+                    reviewed_segments = cursor.fetchall()
                 new_text = request.text if request.text is not None else old_text
                 new_type = request.segment_type or "SPEECH"
                 cursor.execute(
@@ -553,7 +688,7 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
                 )
                 old_speakers = cursor.fetchall()
 
-                if request.status == "ACCEPTED":
+                if request.status == "ACCEPTED" and not is_neighbor_edit:
                     # ACCEPTED is reserved for an unchanged system proposal.
                     # Keep the UI contract small, but reject malformed or
                     # fabricated acceptance requests at the API boundary.
@@ -619,7 +754,7 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
                     )
                     cursor.execute("SELECT transcript_version_id, segment_number, source_segment_id FROM transcript_segments WHERE id = :segment_id", {"segment_id": int(segment_id)})
                     version_number_row = cursor.fetchone()
-                    existing_followup = next(
+                    existing_followup = None if is_reviewed_segment_edit else next(
                         (item for item in reviewed_segments[1:]
                          if _normalize_second(item[1]) == normalized_end),
                         None,
@@ -664,6 +799,7 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
                     )
                     if existing_followup is not None:
                         new_segment_id = int(existing_followup[0])
+                        neighbor_target_ids.append(new_segment_id) if is_neighbor_edit else None
                         cursor.execute(
                             """UPDATE transcript_segments
                                   SET start_second = :start_second, end_second = :end_second,
@@ -684,6 +820,7 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
                              "segment_type": new_type, "source_segment_id": int(version_number_row[2] or segment_id), "new_id": new_segment_var},
                         )
                         new_segment_id = int(new_segment_var.getvalue()[0])
+                        neighbor_target_ids.append(new_segment_id) if is_neighbor_edit else None
                     # Build the target relations first and deduplicate them
                     # before inserting. Several short diarization intervals
                     # can collapse to the same clipped relation at a split
@@ -731,7 +868,85 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
                     elif request.left_transcript_participant_id is not None:
                         cursor.execute("UPDATE transcript_segment_speakers SET end_date = SYSDATE, last_updated = SYSTIMESTAMP WHERE transcript_segment_id = :segment_id AND end_date IS NULL", {"segment_id": int(segment_id)})
                         restore_or_insert_speaker(int(segment_id), int(request.left_transcript_participant_id), _normalize_second(start_second), _normalize_second(end_second), 1.0)
-            cursor.execute(
+            if is_neighbor_edit:
+                if request.segment_type == "SYSTEM_NOTICE":
+                    change_types = ["SYSTEM_NOTICE"]
+                else:
+                    change_types = []
+                old_participant_ids = {int(row[1]) for row in old_speakers}
+                if request.split_at is not None:
+                    change_types.append("SPLIT")
+
+                # Compare text after whitespace normalization.  A split of a
+                # cue that only replaces a line break with the split boundary
+                # must not be recorded as TEXT_EDIT.
+                if request.split_at is None:
+                    text_changed_by_target = {int(segment_id): _normalize_review_text(new_text) != _normalize_review_text(old_text)}
+                else:
+                    text_changed_by_target = {
+                        int(segment_id): _normalize_review_text(left_text) != _normalize_review_text(old_text[:split_at]),
+                        int(new_segment_id): _normalize_review_text(right_text) != _normalize_review_text(old_text[split_at:]),
+                    }
+
+                # Speaker changes are evaluated per resulting segment.  The
+                # previous implementation compared both requested speakers
+                # with the whole source cue and therefore marked every split
+                # child as reassigned when only the first child changed.
+                if request.split_at is None:
+                    old_ids_by_target = {int(segment_id): old_participant_ids}
+                    requested_ids_by_target = {
+                        int(segment_id): ({int(request.left_transcript_participant_id)}
+                                          if request.left_transcript_participant_id is not None
+                                          else old_participant_ids)
+                    }
+                else:
+                    boundary_decimal = _normalize_second(boundary)
+                    old_ids_by_target = {
+                        int(segment_id): {int(row[1]) for row in old_speakers
+                                          if _normalize_second(row[2]) < boundary_decimal},
+                        int(new_segment_id): {int(row[1]) for row in old_speakers
+                                               if _normalize_second(row[3]) > boundary_decimal},
+                    }
+                    requested_ids_by_target = {
+                        int(segment_id): ({int(request.left_transcript_participant_id)}
+                                          if request.left_transcript_participant_id is not None
+                                          else old_ids_by_target[int(segment_id)]),
+                        int(new_segment_id): ({int(request.right_transcript_participant_id)}
+                                              if request.right_transcript_participant_id is not None
+                                              else old_ids_by_target[int(new_segment_id)]),
+                    }
+
+                target_ids = dict.fromkeys(neighbor_target_ids or [int(segment_id)])
+                any_change = False
+                for target_id in target_ids:
+                    target_change_types = list(change_types)
+                    if text_changed_by_target.get(target_id, False):
+                        target_change_types.append("TEXT_EDIT")
+                    if requested_ids_by_target.get(target_id, set()) != old_ids_by_target.get(target_id, set()):
+                        target_change_types.append("SPEAKER_REASSIGNMENT")
+                    if target_change_types:
+                        any_change = True
+                    for change_type in target_change_types:
+                        cursor.execute(
+                            """MERGE INTO transcript_segment_modifications m
+                               USING (SELECT :segment_id segment_id, :candidate_id candidate_id,
+                                             :relative_position relative_position, :change_type change_type FROM dual) x
+                                  ON (m.transcript_segment_id = x.segment_id
+                                  AND m.trigger_candidate_id = x.candidate_id
+                                  AND m.relative_position = x.relative_position
+                                  AND m.change_type = x.change_type)
+                             WHEN MATCHED THEN UPDATE SET m.end_date = NULL,
+                                  m.status = 'USER_MODIFIED', m.last_updated = SYSTIMESTAMP
+                             WHEN NOT MATCHED THEN INSERT
+                                  (transcript_segment_id, trigger_candidate_id, relative_position, change_type, status)
+                                  VALUES (x.segment_id, x.candidate_id, x.relative_position, x.change_type, 'USER_MODIFIED')""",
+                            {"segment_id": target_id, "candidate_id": request.candidate_id,
+                             "relative_position": request.relative_position, "change_type": change_type},
+                        )
+                if not any_change:
+                    raise HTTPException(status_code=422, detail="No neighbor change was submitted")
+            if not is_neighbor_edit:
+                cursor.execute(
                 """UPDATE review_candidates rc
                       SET status = :status, decision = :decision,
                           decision_at = SYSTIMESTAMP, last_updated = SYSTIMESTAMP
@@ -744,10 +959,10 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
                              AND v.version_type = 'AUTOMATIC_DRAFT'
                              AND v.end_date IS NULL
                       )""",
-                {"status": request.status, "decision": decision, "candidate_id": request.candidate_id, "process_id": job_id},
-            )
-            if cursor.rowcount != 1:
-                raise HTTPException(status_code=404, detail="Review candidate not found")
+                    {"status": request.status, "decision": decision, "candidate_id": request.candidate_id, "process_id": job_id},
+                )
+                if cursor.rowcount != 1:
+                    raise HTTPException(status_code=404, detail="Review candidate not found")
             conn.commit()
         except Exception:
             conn.rollback()

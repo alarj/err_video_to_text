@@ -3,6 +3,11 @@
 Projekti tööreeglid ja tõeallikate register on dokumendis
 [`docs/agents.md`](docs/agents.md).
 
+Protsessiandmete analüüsiks või mudeli õpetamiseks kasutamise luba kontrolli
+enne andmete kasutamist registrist
+[`docs/evaluation_data.md`](docs/evaluation_data.md). Registri `Jah`/`Ei`
+otsus kehtib ainult seal nimetatud protsessile või kandidaadivahemikule.
+
 Containeris töötav CLI, mis seob ERR-i olemasoleva VTT teksti audio-põhise
 kõnelejate diarization'iga. MVP1 ei tee uut automaatset kõnetuvastust ega
 automaatselt hääle järgi inimeste nimede määramist. MVP1.2 lisab eraldi

@@ -134,6 +134,7 @@
   "review.accepted": "Kinnitatud",
   "review.rejected": "Tagasi lükatud",
   "review.modified": "Salvestatud",
+  "review.user_modified": "Kasutaja muudetud",
   "review.unresolved": "lahendamata",
   "review.no_candidates": "Ülevaatuskandidaate ei ole.",
   "participants.saved": "Osalejate määramine on salvestatud.",

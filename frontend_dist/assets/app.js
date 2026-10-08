@@ -656,6 +656,7 @@ function renderReview() {
       event.stopPropagation();
       const firstPending = candidates.findIndex((item) => item.status === "PENDING");
       if (firstPending >= 0) {
+        review.editingNeighborId = null;
         review.index = firstPending;
         renderReview();
       }
@@ -687,7 +688,19 @@ function renderReview() {
     const meta = document.createElement("span");
     meta.className = "review-transcript-time";
     meta.textContent = `${formatSeconds(segment.start_second)}–${formatSeconds(segment.end_second)}`;
+    const neighborPosition = candidate.previous?.id === segment.id
+      ? "PREVIOUS"
+      : (candidate.next?.id === segment.id ? "NEXT" : null);
+    const isActiveNeighbor = neighborPosition !== null && review.editingNeighborId === segment.id;
     if (item?.id === candidate.id) renderActiveReviewRow(row, segment, item, review, meta);
+    else if (isActiveNeighbor) renderActiveReviewRow(row, segment, {
+      ...candidate,
+      reviewed_segments: [],
+    }, review, meta, {
+      isNeighbor: true,
+      segmentId: segment.id,
+      relativePosition: neighborPosition,
+    });
     else {
       const parts = item?.reviewed_segments?.length
         ? item.reviewed_segments.slice().sort((left, right) => Number(left.segment_number) - Number(right.segment_number) || Number(left.id) - Number(right.id))
@@ -705,7 +718,7 @@ function renderReview() {
         const textValue = document.createElement(item ? "mark" : "span");
         if (item) textValue.className = "review-candidate-mark";
         textValue.textContent = part.text || "";
-        if (item) textValue.addEventListener("click", (event) => { event.stopPropagation(); review.index = candidates.indexOf(item); renderReview(); });
+        if (item) textValue.addEventListener("click", (event) => { event.stopPropagation(); review.editingNeighborId = null; review.index = candidates.indexOf(item); renderReview(); });
         partLine.appendChild(textValue);
         if (item && partIndex === parts.length - 1) {
           const badge = document.createElement("span");
@@ -714,15 +727,37 @@ function renderReview() {
           partLine.appendChild(badge);
           appendReviewReasonToggle(partLine, item.id, item.reason);
         }
+        if (!item && partIndex === parts.length - 1 && part.user_modification) {
+          const badge = document.createElement("span");
+          badge.className = "review-status-badge review-user-modified-badge";
+          badge.textContent = translate("review.user_modified");
+          partLine.appendChild(badge);
+        }
         partList.appendChild(partLine);
       });
       row.appendChild(partList);
     }
     if (item && item.id !== candidate.id) {
       row.tabIndex = 0;
-      const activateCandidate = () => { review.index = candidates.indexOf(item); renderReview(); };
+      const activateCandidate = () => { review.editingNeighborId = null; review.index = candidates.indexOf(item); renderReview(); };
       row.addEventListener("click", activateCandidate);
       row.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); activateCandidate(); } });
+    }
+    if (!item && neighborPosition !== null && !partOwner) {
+      row.classList.toggle("review-neighbor", candidate.id !== undefined);
+      row.classList.toggle("review-neighbor-active", isActiveNeighbor);
+      if (!isActiveNeighbor) {
+        const activateNeighbor = (event) => {
+          event.stopPropagation();
+          review.editingNeighborId = segment.id;
+          renderReview();
+        };
+        row.addEventListener("click", activateNeighbor);
+        row.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ") { event.preventDefault(); activateNeighbor(event); }
+        });
+        row.tabIndex = 0;
+      }
     }
     transcript.appendChild(row);
   });
@@ -730,7 +765,7 @@ function renderReview() {
   $("#reviewNext").disabled = review.index >= candidates.length - 1;
   $("#reviewPrevious").setAttribute("aria-label", translate("review.previous_label"));
   $("#reviewNext").setAttribute("aria-label", translate("review.next_label"));
-  const target = document.getElementById(`review-segment-${candidate.segment.id}`);
+  const target = document.getElementById(`review-segment-${review.editingNeighborId || candidate.segment.id}`);
   target?.scrollIntoView({ block: "center" });
   const video = $("#reviewVideo");
   video.__reviewCandidateId = candidate.id;
@@ -801,7 +836,7 @@ function appendReviewReasonToggle(container, candidateId, reason) {
   container.append(toggle, details);
 }
 
-function renderActiveReviewRow(row, segment, candidate, review, meta) {
+function renderActiveReviewRow(row, segment, candidate, review, meta, editContext = {}) {
   row.classList.add("review-editing");
   const text = document.createElement("div");
   text.className = "review-inline-line";
@@ -834,49 +869,119 @@ function renderActiveReviewRow(row, segment, candidate, review, meta) {
   editHint.className = "review-edit-hint";
   editHint.textContent = translate("review.edit_hint");
   function saveCurrent() {
-    saveInlineCandidate(candidate, editor, speakerSelect, splitState, save, segment.text || "");
+    const activeEditor = editContext.persistedEditor || editor;
+    const activeSpeaker = editContext.persistedSpeaker || speakerSelect;
+    const originalText = editContext.persistedPart ? (editContext.persistedPart.text || "") : (segment.text || "");
+    const originalSpeaker = editContext.persistedPart
+      ? (reviewSpeakerIntervals(editContext.persistedPart)[0]?.transcript_participant_id
+        ? String(reviewSpeakerIntervals(editContext.persistedPart)[0].transcript_participant_id)
+        : "__SYSTEM_NOTICE__")
+      : currentSpeaker;
+    saveInlineCandidate(candidate, activeEditor, activeSpeaker, splitState, save, originalText, originalSpeaker, editContext);
   }
   function markDirty() {
     save.disabled = false;
     save.textContent = translate("review.confirm");
   }
-  function renderSplit(position, left, right, leftSpeaker, rightSpeaker, boundaryOverride = null, endOverride = null) {
+  function activatePersistedPart(part) {
+    editContext.reviewedSegmentId = Number(part.id);
+    editContext.reviewedStartSecond = Number(part.start_second);
+    editContext.reviewedEndSecond = Number(part.end_second);
+    editContext.persistedPart = part;
+    editor.value = part.text || "";
+    editor.rows = editor.value.split("\n").reduce((total, line) => total + Math.max(1, Math.ceil(line.length / 120)), 0);
+    const partSpeaker = reviewSpeakerIntervals(part)[0]?.transcript_participant_id
+      ? String(reviewSpeakerIntervals(part)[0].transcript_participant_id) : "__SYSTEM_NOTICE__";
+    speakerSelect.value = partSpeaker;
+    splitState.position = null;
+    splitState.left = null;
+    splitState.right = null;
+    splitState.leftSpeaker = partSpeaker;
+    splitState.rightSpeaker = partSpeaker;
+    save.disabled = false;
+    save.textContent = translate("review.confirm");
+  }
+  function renderSplit(position, left, right, leftSpeaker, rightSpeaker, boundaryOverride = null, endOverride = null, persistedParts = null) {
     if (!position || position > editor.value.length || (position === editor.value.length && right == null)) return;
     splitState.position = position;
     splitState.left = left ?? editor.value.slice(0, position).trimEnd();
     splitState.right = right ?? editor.value.slice(position).trimStart();
-    splitState.leftSpeaker = leftSpeaker || currentSpeaker;
-    splitState.rightSpeaker = rightSpeaker || currentSpeaker;
+    const defaultSpeaker = editContext.reviewedSegmentId
+      ? (speakerSelect.value || currentSpeaker)
+      : currentSpeaker;
+    splitState.leftSpeaker = leftSpeaker || defaultSpeaker;
+    splitState.rightSpeaker = rightSpeaker || defaultSpeaker;
     splitParts.replaceChildren();
-    [["left", splitState.left, splitState.leftSpeaker], ["right", splitState.right, splitState.rightSpeaker]].forEach(([side, value, selected]) => {
-      const part = document.createElement("div"); part.className = "review-split-part";
+    const definitions = persistedParts
+      ? persistedParts.map((part) => ({ side: null, value: part.text || "", selected: reviewSpeakerIntervals(part)[0]?.transcript_participant_id ? String(reviewSpeakerIntervals(part)[0].transcript_participant_id) : "__SYSTEM_NOTICE__", part }))
+      : [["left", splitState.left, splitState.leftSpeaker], ["right", splitState.right, splitState.rightSpeaker]].map(([side, value, selected]) => ({ side, value, selected, part: null }));
+    definitions.forEach(({ side, value, selected, part }) => {
+      const partRow = document.createElement("div"); partRow.className = "review-split-part";
       const partTime = document.createElement("span"); partTime.className = "review-split-time";
-      const proposedBoundary = candidate.proposed_boundary_second == null
+      const proposedBoundary = editContext.reviewedSegmentId || persistedParts
+        ? NaN
+        : candidate.proposed_boundary_second == null
         ? NaN
         : Number(candidate.proposed_boundary_second);
       const overrideBoundary = boundaryOverride == null ? NaN : Number(boundaryOverride);
+      const reviewStart = editContext.reviewedSegmentId && Number.isFinite(editContext.reviewedStartSecond)
+        ? editContext.reviewedStartSecond
+        : Number(segment.start_second);
+      const reviewEnd = editContext.reviewedSegmentId && Number.isFinite(editContext.reviewedEndSecond)
+        ? editContext.reviewedEndSecond
+        : Number(segment.end_second);
       const boundary = Number.isFinite(proposedBoundary)
         ? proposedBoundary
         : Number.isFinite(overrideBoundary)
           ? overrideBoundary
-        : Number(segment.start_second) + (Number(segment.end_second) - Number(segment.start_second)) * (position / Math.max(1, editor.value.length));
-      const partStart = side === "left" ? Number(segment.start_second) : boundary;
+        : reviewStart + (reviewEnd - reviewStart) * (position / Math.max(1, editor.value.length));
+      const partStart = part ? Number(part.start_second) : (side === "left" ? reviewStart : boundary);
       const overrideEnd = endOverride == null ? NaN : Number(endOverride);
-      const partEnd = side === "left" ? boundary : (Number.isFinite(overrideEnd) ? overrideEnd : Number(segment.end_second));
+      const partEnd = part ? Number(part.end_second) : (side === "left" ? boundary : (Number.isFinite(overrideEnd) ? overrideEnd : reviewEnd));
       partTime.textContent = `${formatSeconds(partStart)}–${formatSeconds(partEnd)}`;
       const partText = document.createElement("textarea"); partText.value = value; partText.rows = value.split("\n").reduce((total, line) => total + Math.max(1, Math.ceil(line.length / 120)), 0); partText.className = "review-inline-text";
       const partSpeaker = document.createElement("select"); appendSpeakerOptions(partSpeaker, options, selected);
-      partText.addEventListener("input", () => { splitState[side] = partText.value; markDirty(); });
-      partSpeaker.addEventListener("change", () => { splitState[`${side}Speaker`] = partSpeaker.value; markDirty(); });
-      part.append(partTime, partSpeaker, partText); splitParts.appendChild(part);
+      if (persistedParts) {
+        const activatePart = () => {
+          activatePersistedPart(part);
+          editContext.persistedEditor = partText;
+          editContext.persistedSpeaker = partSpeaker;
+          splitState.position = null;
+          splitState.leftSpeaker = partSpeaker.value || currentSpeaker;
+          splitState.rightSpeaker = partSpeaker.value || currentSpeaker;
+        };
+        partText.addEventListener("focus", activatePart);
+        partText.addEventListener("click", activatePart);
+        partSpeaker.addEventListener("focus", activatePart);
+        partSpeaker.addEventListener("change", () => { activatePart(); markDirty(); });
+        partText.addEventListener("input", () => { activatePart(); markDirty(); });
+        partRow.append(partTime, partSpeaker, partText);
+      } else {
+        partText.addEventListener("input", () => { splitState[side] = partText.value; markDirty(); });
+        partSpeaker.addEventListener("change", () => { splitState[`${side}Speaker`] = partSpeaker.value; markDirty(); });
+        partRow.append(partTime, partSpeaker, partText);
+      }
+      splitParts.appendChild(partRow);
     });
     text.hidden = true; text.classList.add("review-original-hidden"); editor.hidden = true; speakerSelect.hidden = true; splitParts.hidden = false;
     splitButton.hidden = true;
     splitReset.hidden = false;
   }
   function activateSplit() {
-    const position = editor.selectionStart;
-    if (!position || position >= editor.value.length) return;
+    const activeEditor = editContext.persistedEditor || editor;
+    const position = activeEditor.selectionStart;
+    if (!position || position >= activeEditor.value.length) return;
+    if (editContext.persistedEditor) {
+      editor.value = activeEditor.value;
+      speakerSelect.value = editContext.persistedSpeaker?.value || currentSpeaker;
+      splitState.leftSpeaker = speakerSelect.value || currentSpeaker;
+      splitState.rightSpeaker = speakerSelect.value || currentSpeaker;
+      editContext.persistedEditor = null;
+      editContext.persistedSpeaker = null;
+      text.hidden = false;
+      editor.hidden = false;
+      speakerSelect.hidden = false;
+    }
     renderSplit(position);
   }
   const splitButton = document.createElement("button");
@@ -897,7 +1002,7 @@ function renderActiveReviewRow(row, segment, candidate, review, meta) {
   proposalLabel.hidden = true;
   splitButton.hidden = false;
   row.append(editHint, splitParts, controls);
-  save.disabled = candidate.status !== "PENDING";
+  save.disabled = editContext.isNeighbor ? false : candidate.status !== "PENDING";
   const persistedParts = (candidate.reviewed_segments || []).slice().sort((left, right) => Number(left.segment_number) - Number(right.segment_number) || Number(left.id) - Number(right.id));
   if (candidate.status !== "PENDING" && persistedParts.length > 1) {
     const leftPart = persistedParts[0];
@@ -907,7 +1012,9 @@ function renderActiveReviewRow(row, segment, candidate, review, meta) {
     const rightSpeaker = reviewSpeakerIntervals(rightPart)[0]?.transcript_participant_id
       ? String(reviewSpeakerIntervals(rightPart)[0].transcript_participant_id) : "__SYSTEM_NOTICE__";
     const boundary = Number(leftPart.end_second);
-    renderSplit(String(leftPart.text || "").length, leftPart.text, rightPart.text, leftSpeaker, rightSpeaker, boundary, Number(rightPart.end_second));
+    renderSplit(String(leftPart.text || "").length, leftPart.text, rightPart.text, leftSpeaker, rightSpeaker, boundary, Number(rightPart.end_second), persistedParts);
+    splitButton.hidden = false;
+    splitReset.hidden = false;
   }
   if (candidate.status === "PENDING" && candidate.candidate_type === "SPEAKER_BOUNDARY" && Number.isInteger(candidate.proposed_split_at)) {
     proposalLabel.textContent = translate("review.proposed_split");
@@ -921,7 +1028,7 @@ function renderActiveReviewRow(row, segment, candidate, review, meta) {
   }
 }
 
-async function saveInlineCandidate(candidate, editor, speaker, splitState, button, originalText = "") {
+async function saveInlineCandidate(candidate, editor, speaker, splitState, button, originalText = "", originalSpeaker = "", editContext = {}) {
   button.disabled = true;
   try {
     // The text may have been edited after the split was chosen.  Recalculate
@@ -935,8 +1042,13 @@ async function saveInlineCandidate(candidate, editor, speaker, splitState, butto
       && splitState.right === editor.value.slice(splitAt).trimStart()
       && String(splitState.leftSpeaker || "") === String(candidate.proposed_left_speaker || "")
       && String(splitState.rightSpeaker || "") === String(candidate.proposed_right_speaker || "");
-    const unchanged = splitState.position === null && editor.value === originalText;
-    const status = proposalAccepted ? "ACCEPTED" : (unchanged ? "REJECTED" : "MODIFIED");
+    const speakerUnchanged = String(speaker.value || "") === String(originalSpeaker || "");
+    const unchanged = splitState.position === null && editor.value === originalText && speakerUnchanged;
+    const status = editContext.isNeighbor
+      ? candidate.status
+      : editContext.reviewedSegmentId
+        ? "MODIFIED"
+      : (proposalAccepted ? "ACCEPTED" : (unchanged ? "REJECTED" : "MODIFIED"));
     // For an untouched proposal keep the exact source text (including
     // whitespace/newlines).  Modified splits continue to use the edited
     // parts joined with a single separator.
@@ -953,9 +1065,13 @@ async function saveInlineCandidate(candidate, editor, speaker, splitState, butto
           ? (splitState.leftSpeaker && splitState.leftSpeaker !== "__SYSTEM_NOTICE__" ? Number(splitState.leftSpeaker) : null)
           : (speaker.value && speaker.value !== "__SYSTEM_NOTICE__" ? Number(speaker.value) : null),
         right_transcript_participant_id: splitState.position !== null && splitState.rightSpeaker && splitState.rightSpeaker !== "__SYSTEM_NOTICE__" ? Number(splitState.rightSpeaker) : null,
+        reviewed_segment_id: editContext.reviewedSegmentId || null,
+        target_segment_id: editContext.isNeighbor ? editContext.segmentId : null,
+        relative_position: editContext.isNeighbor ? editContext.relativePosition : null,
       }),
     });
     state.review.data = await request(`/jobs/${state.review.jobId}/review`);
+    state.review.editingNeighborId = null;
     $("#reviewMessage").textContent = "";
     $("#reviewMessage").classList.remove("error");
     renderReview();
@@ -1196,8 +1312,8 @@ $("#participantReviewClose").addEventListener("click", () => {
 $("#participantReviewSave").addEventListener("click", () => saveParticipantReview());
 $("#participantReviewViewer").addEventListener("close", destroyParticipantPlayers);
 $("#reviewClose").addEventListener("click", () => $("#reviewViewer").close());
-$("#reviewPrevious").addEventListener("click", () => { if (state.review?.index > 0) { state.review.index -= 1; renderReview(); } });
-$("#reviewNext").addEventListener("click", () => { if (state.review && state.review.index < state.review.data.candidates.length - 1) { state.review.index += 1; renderReview(); } });
+$("#reviewPrevious").addEventListener("click", () => { if (state.review?.index > 0) { state.review.editingNeighborId = null; state.review.index -= 1; renderReview(); } });
+$("#reviewNext").addEventListener("click", () => { if (state.review && state.review.index < state.review.data.candidates.length - 1) { state.review.editingNeighborId = null; state.review.index += 1; renderReview(); } });
 $("#reviewViewer").addEventListener("close", destroyReviewPlayer);
 
 $("#artifactViewerClose").addEventListener("click", () => $("#artifactViewer").close());

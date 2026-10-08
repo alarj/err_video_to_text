@@ -24,6 +24,8 @@ erDiagram
     TRANSCRIPT_SEGMENTS ||--o{ TRANSCRIPT_SEGMENT_SPEAKERS : has
     TRANSCRIPT_PARTICIPANTS ||--o{ TRANSCRIPT_SEGMENT_SPEAKERS : assigned
     TRANSCRIPT_SEGMENTS ||--o{ REVIEW_CANDIDATES : flagged
+    TRANSCRIPT_SEGMENTS ||--o{ TRANSCRIPT_SEGMENT_MODIFICATIONS : modified
+    REVIEW_CANDIDATES ||--o{ TRANSCRIPT_SEGMENT_MODIFICATIONS : triggers
 
     SOURCES {
         NUMBER id PK
@@ -139,6 +141,14 @@ erDiagram
         VARCHAR2 status
         VARCHAR2 decision
         TIMESTAMP decision_at
+    }
+    TRANSCRIPT_SEGMENT_MODIFICATIONS {
+        NUMBER id PK
+        NUMBER transcript_segment_id FK
+        NUMBER trigger_candidate_id FK
+        VARCHAR2 relative_position
+        VARCHAR2 change_type
+        VARCHAR2 status
     }
 ```
 

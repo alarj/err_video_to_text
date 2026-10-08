@@ -472,7 +472,63 @@ Kasutaja saab:
 - muuta ühe või mitme osa kõnelejat;
 - parandada teksti;
 - märkida segmendi või selle osa süsteemseks ekraaniteateks;
+- avada parandamiseks ka kandidaadile vahetult eelneva või järgneva segmendi,
+  kui süsteem leidis probleemi lähedalt, kuid tegelik viga paikneb naaberlõigus;
 - jätta koha hilisemaks ülevaatuseks.
+
+### Kandidaadi naaberlõigu parandamine
+
+Kandidaadi juures kuvatavad eelmine ja järgmine segment ei ole ainult
+lugemiskontekst. Kasutaja peab saama valida parandamiseks kandidaadi enda,
+vahetult eelmise segmendi või vahetult järgmise segmendi. Valitud segmendis
+peab saama muuta kõnelejat ja teksti ning vajaduse korral jagada segment
+kaheks. Ühe kandidaadi käsitlemisel võib muuta nii kandidaati kui ka ühte või
+mõlemat naabersegmenti.
+
+Naabersegment ei muutu selle tõttu ülevaatuskandidaadiks ja talle ei anta
+`ACCEPTED`, `REJECTED` ega `MODIFIED` kandidaadiolekut. Käsitsi parandatud
+naabersegment märgitakse `USER_MODIFIED`. Selle paranduse juures säilitatakse
+vähemalt:
+
+- paranduse käivitanud kandidaadi ID (`trigger_candidate_id`);
+- asukoht kandidaadi suhtes: `PREVIOUS` või `NEXT`;
+- muudatuse liik või liigid: `SPEAKER_REASSIGNMENT`, `TEXT_EDIT`, `SPLIT`
+  ja/või `SYSTEM_NOTICE`.
+
+`USER_MODIFIED` kirjeldab segmendi paranduse päritolu, mitte kandidaadi
+otsust. Nimetust ega olekut `ADJACENT_SEGMENT_EDIT` ei kasutata.
+
+### Korduv poolitus juba poolitatud segmendis
+
+Üks kandidaat võib vajada rohkem kui ühte poolitust. Pärast esimese poolituse
+kinnitamist peab kasutaja saama valida konkreetse `REVIEWED_DRAFT`-i alamsegmendi
+ja selle uuesti poolitada. Päring sisaldab selleks `reviewed_segment_id` väärtust;
+see ei ole naaberlõigu `target_segment_id` alias ega tohi kasutada
+`TRANSCRIPT_SEGMENT_MODIFICATIONS` tabelit.
+
+Korduv poolitus muudab ainult valitud alamsegmenti. Kõik sama algsegmendi teised
+juba loodud alamsegmendid, nende tekst, kõnelejad, ajad ja metadata jäävad
+muutmata. Uus alamsegment säilitab sama `source_segment_id` ning poolituse
+metadata seotakse kandidaadi enda otsusega.
+
+Korduva poolituse järel jääb kandidaat üle vaadatud olekusse; kui tulemus erineb
+süsteemi ettepanekust, on kandidaadi otsus `MODIFIED`, mitte uus `PENDING`.
+
+Kandidaadi olek määratakse ainult süsteemi pakutud kandidaadi enda kohta:
+
+- kui süsteemi ettepanek oli vale ja kandidaat jäi muutmata, on kandidaat
+  `REJECTED` ka siis, kui kasutaja parandas selle kõrval naabersegmendi;
+- kui kasutaja muutis kandidaadi enda teksti, kõnelejat või poolitust, on
+  kandidaat `MODIFIED`;
+- kui süsteemi ettepanek kinnitati muutmata kujul, on kandidaat `ACCEPTED`;
+- kui muudeti nii kandidaati kui ka naabersegmenti, on kandidaat `MODIFIED`
+  ning naabersegment eraldi `USER_MODIFIED`.
+
+Näiteks võib kandidaat olla `REJECTED`, kuid tema järgmine segment
+`USER_MODIFIED`, asukohaga `NEXT` ja muudatuse liigiga `SPLIT`. Sellest peab
+hiljem olema üheselt järeldatav, et süsteem leidis probleemi lähedalt, kuid
+tegeliku vea täpse asukoha leidis kasutaja. See eristus on vajalik
+kandidaadialgoritmi analüüsiks ja võimalike õppeandmete koostamiseks.
 
 Kandidaadi olekud on:
 
@@ -622,6 +678,14 @@ Minimaalsed täpsustused:
 - ühe segmendi mitu kõnelejat säilitatakse tabelis
   `transcript_segment_speakers`.
 
+Käsitsi parandatud naabersegmendi kohta peab andmemudel säilitama märgendi
+`USER_MODIFIED`, paranduse käivitanud kandidaadi viite, suhtelise asukoha
+`PREVIOUS` või `NEXT` ning tehtud muudatuse liigi või liigid. Need andmed võib
+teostada segmendi muutmismetadata või eraldi segmendiparanduse seosena, kuid
+need ei ole uus kandidaadiolek ega ülevaatusotsuste versiooniajalugu. Kui
+parandus jagab ühe naabersegmendi mitmeks, peab sama päritolu olema jälgitav
+kõigi tekkinud `REVIEWED_DRAFT` segmentide juures.
+
 `review_candidates` viitab algsele automaatse drafti segmendile ja hoiab
 kandidaadi viimast olekut ning otsust. Eraldi `review_decisions` tabelit,
 kohustuslikke `proposed_boundary_second` välju, näotunnuseid ega
@@ -671,6 +735,11 @@ ning alustab vajaduse korral `REVIEWED_DRAFT` ja `IN_REVIEW` etapi.
 nendest tulenevad asendussegmendid. Pikka kasutaja ülevaatust ei hoita avatud
 andmebaasitransaktsioonis. Pärast edukat salvestust genereeritakse
 `REVIEWED_DRAFT` Markdown ja JSON uuesti.
+
+Naaberlõigu parandamisel sisaldab sama päring `target_segment_id` ja
+`relative_position` väärtust (`PREVIOUS` või `NEXT`). Sellisel juhul rakendatakse
+muudatus ainult `REVIEWED_DRAFT` naaberlõigule, salvestatakse `USER_MODIFIED`
+metadata ning kandidaadi enda otsust ei muudeta.
 
 `POST /finalize` kontrollib eeltingimusi ning loob muutumatu lõppversiooni ja
 selle artefaktid.

@@ -63,3 +63,6 @@ class ReviewCandidateRequest(BaseModel):
     split_at: int | None = Field(default=None, gt=0)
     left_transcript_participant_id: int | None = Field(default=None, gt=0)
     right_transcript_participant_id: int | None = Field(default=None, gt=0)
+    reviewed_segment_id: int | None = Field(default=None, gt=0)
+    target_segment_id: int | None = Field(default=None, gt=0)
+    relative_position: Literal["PREVIOUS", "NEXT"] | None = None

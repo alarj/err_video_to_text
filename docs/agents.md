@@ -36,6 +36,10 @@
   kirjutavad andmebaasi või muudavad olemasolevaid andmeid.
 - Ilma sellise loata on lubatud ainult dry-run'id, lugemispäringud ja muud
   mitte-muteerivad kontrollid.
+- Mistahes andmeid või andmestruktuuri muutvat tegevust ei tohi teha ilma
+  kasutaja eelneva eraldi loata — mitte kunagi. See hõlmab nii andmeridade
+  lisamist, muutmist ja kustutamist kui ka tabeli, veeru, indeksi, piirangu või
+  sequence'i lisamist, muutmist või kustutamist ning migratsiooni rakendamist.
 - Kui kontroll eeldab andmete muutmist, tuleb enne peatuda ja küsida kasutajalt
   eraldi luba.
 
@@ -76,6 +80,7 @@
 - [`README.md`](../README.md)
 - [`docs/task_to_solve.md`](task_to_solve.md)
 - [`docs/agents.md`](agents.md)
+- [`docs/evaluation_data.md`](evaluation_data.md)
 - [`docs/err2text_bpmn.drawio`](err2text_bpmn.drawio)
 - [`docs/err2text_bpmn.drawio.png`](err2text_bpmn.drawio.png)
 - [`db/erd.md`](../db/erd.md)
@@ -99,6 +104,10 @@
 - Kui muudad andmestruktuure või andmebaasipoolseid reegleid, loe `db/erd.md` ja `db/schema/001_core_schema.sql`.
 - Kui muudad URL-i lahendamist või meediaallikate salvestamist, loe `backend/app/services/resolver.py`, `backend/app/api/routes.py` ja BPMN-protsessi.
 - Kui muudad jõudlust või diarization’i käitamist, loe `docs/task_to_solve.md`, `compose.yaml` ja `backend/worker.py`.
+- Kui kasutad protsessiandmeid kvantitatiivseks analüüsiks või mudeli
+  õpetamiseks või muudad nende kasutusluba, loe enne
+  `docs/evaluation_data.md`. Kasutada tohib ainult registris vastava eesmärgi
+  juures väärtusega `Jah` märgitud protsessi või kandidaadivahemikku.
 
 ## 8. Väljundi ootused
 
