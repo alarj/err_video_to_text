@@ -319,6 +319,7 @@ dd { margin: 0; line-height: 1.45; overflow-wrap: anywhere; }
 .error-viewer p { margin: 0 0 24px; font-size: 17px; line-height: 1.45; }
 .error-viewer-actions { display: flex; justify-content: flex-end; }
 body:has(dialog[open]) > main { pointer-events: none; user-select: none; }
+dialog:not([open]) { display: none; }
 dialog[open] { pointer-events: auto; }
 .site-footer { padding: 8px 4px; color: var(--funo-muted); font-size: 13px; }
 
