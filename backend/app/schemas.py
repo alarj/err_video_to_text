@@ -66,3 +66,5 @@ class ReviewCandidateRequest(BaseModel):
     reviewed_segment_id: int | None = Field(default=None, gt=0)
     target_segment_id: int | None = Field(default=None, gt=0)
     relative_position: Literal["PREVIOUS", "NEXT"] | None = None
+    merge_segment_group: bool = False
+    speaker_assignment: Literal["PARTICIPANT", "UNKNOWN"] | None = None

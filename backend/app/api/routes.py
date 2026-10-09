@@ -40,6 +40,32 @@ def _normalize_review_text(value: object) -> str:
     return " ".join(str(value or "").split())
 
 
+def _merge_segment_texts(rows: list[tuple[object, ...]]) -> str:
+    """Join active segment texts in transcript order without dropping content."""
+    return "\n".join(str(row[3] or "") for row in rows)
+
+
+def _merge_text_changed(new_text: object, merged_text: object) -> bool:
+    """Detect edits against the complete lossless merge, not the first child."""
+    return _normalize_review_text(new_text) != _normalize_review_text(merged_text)
+
+
+def _allocate_split_segment_numbers(historical_max: int, active_tail_ids: list[int]) -> tuple[int, dict[int, int]]:
+    """Allocate fresh numbers without reusing numbers from soft-deleted rows.
+
+    The new right-hand child gets the first number after the historical
+    maximum.  Active rows after the split are moved into the following fresh
+    range in their existing chronological order.  Tombstoned rows are never
+    included in, or changed by, this allocation.
+    """
+    first_new_number = int(historical_max) + 1
+    tail_numbers = {
+        int(segment_id): first_new_number + index + 1
+        for index, segment_id in enumerate(active_tail_ids)
+    }
+    return first_new_number, tail_numbers
+
+
 def _logical_neighbor_ids(ordered_ids: list[int], group_ids: set[int]) -> tuple[int | None, int | None]:
     """Return the nearest segments outside a candidate's complete reviewed group."""
     group_positions = [index for index, segment_id in enumerate(ordered_ids) if segment_id in group_ids]
@@ -50,6 +76,14 @@ def _logical_neighbor_ids(ordered_ids: list[int], group_ids: set[int]) -> tuple[
     previous_id = ordered_ids[first - 1] if first > 0 else None
     next_id = ordered_ids[last + 1] if last + 1 < len(ordered_ids) else None
     return previous_id, next_id
+
+
+def _logical_group_edge(relative_position: str, ordered_ids: list[int], group_ids: set[int]) -> int | None:
+    """Return the edge of a contiguous neighbor group facing the candidate."""
+    positions = [index for index, segment_id in enumerate(ordered_ids) if segment_id in group_ids]
+    if not positions or max(positions) - min(positions) + 1 != len(group_ids):
+        return None
+    return ordered_ids[max(positions)] if relative_position == "PREVIOUS" else ordered_ids[min(positions)]
 
 
 def _validate_logical_neighbor_target(
@@ -70,6 +104,12 @@ def _validate_review_target(request: ReviewCandidateRequest) -> None:
             status_code=422,
             detail="reviewed_segment_id edits require status MODIFIED",
         )
+
+
+def _validate_speaker_assignment_scope(request: ReviewCandidateRequest, is_neighbor_merge: bool) -> None:
+    """Speaker assignment is an explicit operation for saved neighbor merges only."""
+    if request.speaker_assignment is not None and not is_neighbor_merge:
+        raise HTTPException(status_code=422, detail="speaker_assignment is only valid for a neighbor merge")
 
 
 def _utc_iso(value: datetime | None) -> str | None:
@@ -580,9 +620,19 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
             decision = request.decision or request.status
             is_neighbor_edit = request.target_segment_id is not None
             is_reviewed_segment_edit = request.reviewed_segment_id is not None
+            is_neighbor_merge = is_neighbor_edit and request.merge_segment_group
             _validate_review_target(request)
             if is_neighbor_edit and is_reviewed_segment_edit:
                 raise HTTPException(status_code=422, detail="Choose either a neighbor or a reviewed segment")
+            if request.merge_segment_group and not is_neighbor_edit:
+                raise HTTPException(status_code=422, detail="merge_segment_group requires a neighbor target")
+            if request.merge_segment_group and request.split_at is not None:
+                raise HTTPException(status_code=422, detail="merge_segment_group cannot be combined with split_at")
+            _validate_speaker_assignment_scope(request, is_neighbor_merge)
+            if request.speaker_assignment == "PARTICIPANT" and request.left_transcript_participant_id is None:
+                raise HTTPException(status_code=422, detail="PARTICIPANT assignment requires a participant id")
+            if request.speaker_assignment == "UNKNOWN" and request.left_transcript_participant_id is not None:
+                raise HTTPException(status_code=422, detail="UNKNOWN assignment cannot include a participant id")
             if is_neighbor_edit or request.status in {"ACCEPTED", "MODIFIED"}:
                 cursor.execute(
                     """SELECT rc.transcript_segment_id, rc.candidate_type
@@ -643,12 +693,13 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
                     previous_id, next_id = _logical_neighbor_ids(
                         [int(row[0]) for row in ordered_segments], group_ids,
                     )
-                    _validate_logical_neighbor_target(
-                        request.relative_position,
-                        int(request.target_segment_id),
-                        previous_id,
-                        next_id,
-                    )
+                    if not is_neighbor_merge:
+                        _validate_logical_neighbor_target(
+                            request.relative_position,
+                            int(request.target_segment_id),
+                            previous_id,
+                            next_id,
+                        )
                     cursor.execute(
                         """SELECT s.id, s.start_second, s.end_second, s.text, s.source_segment_id,
                                   s.segment_number
@@ -677,7 +728,43 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
                         {"segment_id": int(segment_id)},
                     )
                     reviewed_segments = cursor.fetchall()
+                    if is_neighbor_merge:
+                        if len(reviewed_segments) < 2:
+                            raise HTTPException(status_code=422, detail="Neighbor segment group has no saved split to merge")
+                        group_ids = {int(item[0]) for item in reviewed_segments}
+                        if int(request.target_segment_id) not in group_ids:
+                            raise HTTPException(status_code=422, detail="Target segment is not part of the neighbor group")
+                        target_group_edge = _logical_group_edge(
+                            request.relative_position,
+                            [int(item[0]) for item in ordered_segments],
+                            group_ids,
+                        )
+                        if target_group_edge is None:
+                            raise HTTPException(status_code=422, detail="Neighbor segment group is not contiguous")
+                        expected_edge = previous_id if request.relative_position == "PREVIOUS" else next_id
+                        if expected_edge is None or int(target_group_edge) != int(expected_edge):
+                            raise HTTPException(status_code=422, detail="Target segment group is not an immediate candidate neighbor")
+                        # Merging always keeps the first active part as the
+                        # stable segment identity. Other active parts are
+                        # closed only in the explicit merge operation.
+                        segment = reviewed_segments[0]
+                        segment_id, start_second, end_second, old_text, source_id, segment_number = segment
+                        merge_text = _merge_segment_texts(reviewed_segments)
+                    if request.left_transcript_participant_id is not None:
+                        cursor.execute(
+                            """SELECT 1
+                                 FROM transcript_participants tp
+                                 JOIN transcript_segments s ON s.transcript_version_id = tp.transcript_version_id
+                                WHERE s.id = :segment_id
+                                  AND tp.id = :participant_id
+                                  AND tp.end_date IS NULL""",
+                            {"segment_id": int(segment_id), "participant_id": int(request.left_transcript_participant_id)},
+                        )
+                        if cursor.fetchone() is None:
+                            raise HTTPException(status_code=422, detail="Speaker does not belong to the active reviewed version")
                 new_text = request.text if request.text is not None else old_text
+                if is_neighbor_merge:
+                    new_text = request.text if request.text is not None else merge_text
                 new_type = request.segment_type or "SPEECH"
                 cursor.execute(
                     """SELECT id, transcript_participant_id, start_second, end_second, confidence
@@ -754,26 +841,57 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
                     )
                     cursor.execute("SELECT transcript_version_id, segment_number, source_segment_id FROM transcript_segments WHERE id = :segment_id", {"segment_id": int(segment_id)})
                     version_number_row = cursor.fetchone()
+                    if version_number_row is None:
+                        raise HTTPException(status_code=409, detail="Split target no longer exists")
                     existing_followup = None if is_reviewed_segment_edit else next(
                         (item for item in reviewed_segments[1:]
                          if _normalize_second(item[1]) == normalized_end),
                         None,
                     )
                     if existing_followup is None:
+                        # Segment numbers are unique across historical rows as
+                        # well as active rows. Lock the version and allocate a
+                        # fresh range above the historical maximum so a new
+                        # split can never reuse a soft-deleted number.
                         cursor.execute(
-                            """UPDATE transcript_segments
-                                  SET segment_number = segment_number + 100000, last_updated = SYSTIMESTAMP
-                                WHERE transcript_version_id = :version_id AND segment_number > :segment_number
-                                  AND end_date IS NULL""",
+                            """SELECT id
+                                 FROM transcript_versions
+                                WHERE id = :version_id AND end_date IS NULL
+                                FOR UPDATE""",
+                            {"version_id": int(version_number_row[0])},
+                        )
+                        if cursor.fetchone() is None:
+                            raise HTTPException(status_code=409, detail="Transcript version is no longer active")
+                        cursor.execute(
+                            """SELECT NVL(MAX(segment_number), 0)
+                                 FROM transcript_segments
+                                WHERE transcript_version_id = :version_id""",
+                            {"version_id": int(version_number_row[0])},
+                        )
+                        historical_max = int(cursor.fetchone()[0] or 0)
+                        cursor.execute(
+                            """SELECT id
+                                 FROM transcript_segments
+                                WHERE transcript_version_id = :version_id
+                                  AND end_date IS NULL
+                                  AND segment_number > :segment_number
+                                ORDER BY segment_number, id""",
                             {"version_id": int(version_number_row[0]), "segment_number": int(version_number_row[1])},
                         )
-                        cursor.execute(
-                            """UPDATE transcript_segments
-                                  SET segment_number = segment_number - 99999, last_updated = SYSTIMESTAMP
-                                WHERE transcript_version_id = :version_id AND segment_number > :temporary_number
-                                  AND end_date IS NULL""",
-                            {"version_id": int(version_number_row[0]), "temporary_number": int(version_number_row[1]) + 100000},
+                        active_tail_ids = [int(row[0]) for row in cursor.fetchall()]
+                        new_segment_number, tail_numbers = _allocate_split_segment_numbers(
+                            historical_max, active_tail_ids,
                         )
+                        # Every destination is above MAX(segment_number), so
+                        # no temporary collision with active or tombstoned
+                        # rows is possible. Soft-deleted rows remain untouched.
+                        for tail_id, tail_number in tail_numbers.items():
+                            cursor.execute(
+                                """UPDATE transcript_segments
+                                      SET segment_number = :segment_number, last_updated = SYSTIMESTAMP
+                                    WHERE id = :segment_id AND end_date IS NULL""",
+                                {"segment_id": tail_id, "segment_number": tail_number},
+                            )
                     else:
                         cursor.execute(
                             """UPDATE transcript_segment_speakers
@@ -815,7 +933,7 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
                                (transcript_version_id, segment_number, start_second, end_second, text, segment_type, source_segment_id)
                                VALUES (:version_id, :segment_number, :start_second, :end_second, :text, :segment_type, :source_segment_id)
                                RETURNING id INTO :new_id""",
-                            {"version_id": int(version_number_row[0]), "segment_number": int(version_number_row[1]) + 1,
+                            {"version_id": int(version_number_row[0]), "segment_number": new_segment_number,
                              "start_second": boundary, "end_second": end_second, "text": right_text,
                              "segment_type": new_type, "source_segment_id": int(version_number_row[2] or segment_id), "new_id": new_segment_var},
                         )
@@ -843,12 +961,84 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
                                 pending_relations[key] = relation
                     for target_id, participant_id, target_start, target_end, confidence in pending_relations.values():
                         restore_or_insert_speaker(target_id, participant_id, target_start, target_end, confidence)
-                else:
-                    # Removing a previous split must close every active sibling
-                    # belonging to the same automatic source segment.
+                elif is_neighbor_merge:
+                    # Only an explicit merge may close the other active parts
+                    # of a previously saved neighbor split.
+                    merge_start = min(_normalize_second(item[1]) for item in reviewed_segments)
+                    merge_end = max(_normalize_second(item[2]) for item in reviewed_segments)
+                    first_participant_ids = {int(row[1]) for row in old_speakers}
+                    merge_participant_id = None
+                    if request.speaker_assignment == "PARTICIPANT":
+                        merge_participant_id = int(request.left_transcript_participant_id)
+                    elif request.speaker_assignment is None:
+                        merge_participant_id = next(iter(first_participant_ids), None) if len(first_participant_ids) == 1 else None
+                    if merge_participant_id is None and request.speaker_assignment is None and source_id is not None:
+                        cursor.execute(
+                            """SELECT reviewed_tp.id,
+                                      SUM(ss.end_second - ss.start_second) AS speaking_time
+                                 FROM transcript_segment_speakers ss
+                                 JOIN transcript_segments s ON s.id = ss.transcript_segment_id
+                                 JOIN transcript_versions v ON v.id = s.transcript_version_id
+                                 JOIN transcript_participants automatic_tp
+                                   ON automatic_tp.id = ss.transcript_participant_id
+                                 JOIN transcript_participants reviewed_tp
+                                   ON reviewed_tp.speaker_label = automatic_tp.speaker_label
+                                  AND reviewed_tp.transcript_version_id = (
+                                      SELECT transcript_version_id FROM transcript_segments WHERE id = :reviewed_segment_id
+                                  )
+                                  AND reviewed_tp.end_date IS NULL
+                                WHERE s.id = :source_segment_id
+                                  AND v.version_type = 'AUTOMATIC_DRAFT'
+                                  AND v.end_date IS NULL AND ss.end_date IS NULL
+                                GROUP BY reviewed_tp.id
+                                ORDER BY speaking_time DESC, reviewed_tp.id
+                                FETCH FIRST 1 ROW ONLY""",
+                            {"source_segment_id": int(source_id), "reviewed_segment_id": int(segment_id)},
+                        )
+                        dominant = cursor.fetchone()
+                        merge_participant_id = int(dominant[0]) if dominant is not None else None
+                    if merge_participant_id is None and request.speaker_assignment in {None, "UNKNOWN"}:
+                        cursor.execute(
+                            """SELECT id
+                                 FROM transcript_participants
+                                WHERE transcript_version_id = (
+                                    SELECT transcript_version_id FROM transcript_segments WHERE id = :segment_id
+                                )
+                                  AND end_date IS NULL
+                                  AND mapping_status = 'UNKNOWN'
+                                ORDER BY id
+                                FETCH FIRST 1 ROW ONLY""",
+                            {"segment_id": int(segment_id)},
+                        )
+                        unknown_participant = cursor.fetchone()
+                        merge_participant_id = int(unknown_participant[0]) if unknown_participant is not None else None
+                        if request.speaker_assignment == "UNKNOWN" and merge_participant_id is None:
+                            raise HTTPException(
+                                status_code=422,
+                                detail="Reviewed version has no UNKNOWN speaker mapping",
+                            )
+
+                    # A merged result is one active segment.  Close historical
+                    # SPLIT metadata without inventing a new database enum.
+                    for part in reviewed_segments:
+                        cursor.execute(
+                            """UPDATE transcript_segment_modifications
+                                  SET end_date = SYSDATE, last_updated = SYSTIMESTAMP
+                                WHERE transcript_segment_id = :segment_id
+                                  AND end_date IS NULL
+                                  AND change_type = 'SPLIT'""",
+                            {"segment_id": int(part[0])},
+                        )
+
                     for extra in reviewed_segments[1:]:
                         cursor.execute(
                             """UPDATE transcript_segment_speakers
+                                  SET end_date = SYSDATE, last_updated = SYSTIMESTAMP
+                                WHERE transcript_segment_id = :segment_id AND end_date IS NULL""",
+                            {"segment_id": int(extra[0])},
+                        )
+                        cursor.execute(
+                            """UPDATE transcript_segment_modifications
                                   SET end_date = SYSDATE, last_updated = SYSTIMESTAMP
                                 WHERE transcript_segment_id = :segment_id AND end_date IS NULL""",
                             {"segment_id": int(extra[0])},
@@ -859,6 +1049,26 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
                                 WHERE id = :segment_id AND end_date IS NULL""",
                             {"segment_id": int(extra[0])},
                         )
+                    cursor.execute(
+                        """UPDATE transcript_segment_speakers
+                              SET end_date = SYSDATE, last_updated = SYSTIMESTAMP
+                            WHERE transcript_segment_id = :segment_id AND end_date IS NULL""",
+                        {"segment_id": int(segment_id)},
+                    )
+                    cursor.execute(
+                        """UPDATE transcript_segments
+                              SET start_second = :start_second, end_second = :end_second,
+                                  text = :text, segment_type = :segment_type, last_updated = SYSTIMESTAMP
+                            WHERE id = :segment_id AND end_date IS NULL""",
+                        {"start_second": merge_start, "end_second": merge_end,
+                         "text": new_text, "segment_type": new_type, "segment_id": int(segment_id)},
+                    )
+                    if new_type != "SYSTEM_NOTICE" and merge_participant_id is not None:
+                        restore_or_insert_speaker(int(segment_id), merge_participant_id, merge_start, merge_end, 1.0)
+                    neighbor_target_ids = [int(segment_id)]
+                else:
+                    # A normal neighbor edit changes only the selected target.
+                    # It must not implicitly merge or close saved sibling parts.
                     cursor.execute(
                         "UPDATE transcript_segments SET text = :text, segment_type = :segment_type, last_updated = SYSTIMESTAMP WHERE id = :segment_id",
                         {"text": new_text, "segment_type": new_type, "segment_id": int(segment_id)},
@@ -881,7 +1091,13 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
                 # cue that only replaces a line break with the split boundary
                 # must not be recorded as TEXT_EDIT.
                 if request.split_at is None:
-                    text_changed_by_target = {int(segment_id): _normalize_review_text(new_text) != _normalize_review_text(old_text)}
+                    text_changed_by_target = {
+                        int(segment_id): (
+                            _merge_text_changed(new_text, merge_text)
+                            if is_neighbor_merge
+                            else _normalize_review_text(new_text) != _normalize_review_text(old_text)
+                        )
+                    }
                 else:
                     text_changed_by_target = {
                         int(segment_id): _normalize_review_text(left_text) != _normalize_review_text(old_text[:split_at]),
@@ -894,11 +1110,20 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
                 # child as reassigned when only the first child changed.
                 if request.split_at is None:
                     old_ids_by_target = {int(segment_id): old_participant_ids}
-                    requested_ids_by_target = {
-                        int(segment_id): ({int(request.left_transcript_participant_id)}
-                                          if request.left_transcript_participant_id is not None
-                                          else old_participant_ids)
-                    }
+                    if is_neighbor_merge:
+                        requested_ids_by_target = {
+                            int(segment_id): (
+                                {int(merge_participant_id)}
+                                if merge_participant_id is not None and new_type != "SYSTEM_NOTICE"
+                                else set()
+                            )
+                        }
+                    else:
+                        requested_ids_by_target = {
+                            int(segment_id): ({int(request.left_transcript_participant_id)}
+                                              if request.left_transcript_participant_id is not None
+                                              else old_participant_ids)
+                        }
                 else:
                     boundary_decimal = _normalize_second(boundary)
                     old_ids_by_target = {
@@ -917,7 +1142,7 @@ def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[
                     }
 
                 target_ids = dict.fromkeys(neighbor_target_ids or [int(segment_id)])
-                any_change = False
+                any_change = bool(is_neighbor_merge)
                 for target_id in target_ids:
                     target_change_types = list(change_types)
                     if text_changed_by_target.get(target_id, False):

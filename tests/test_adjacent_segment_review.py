@@ -4,8 +4,13 @@ import pytest
 
 from backend.app.api.routes import (
     _logical_neighbor_ids,
+    _logical_group_edge,
+    _merge_text_changed,
+    _merge_segment_texts,
+    _allocate_split_segment_numbers,
     _validate_logical_neighbor_target,
     _validate_review_target,
+    _validate_speaker_assignment_scope,
 )
 from backend.app.schemas import ReviewCandidateRequest
 
@@ -34,6 +39,70 @@ def test_review_request_supports_repeated_split_target():
 
     assert request.reviewed_segment_id == 4631
     assert request.target_segment_id is None
+
+
+def test_review_request_supports_explicit_neighbor_group_merge():
+    request = ReviewCandidateRequest.model_validate({
+        "candidate_id": 890,
+        "status": "PENDING",
+        "target_segment_id": 17626,
+        "relative_position": "PREVIOUS",
+        "merge_segment_group": True,
+    })
+
+    assert request.merge_segment_group is True
+
+
+def test_review_request_preserves_explicit_speaker_assignment():
+    participant = ReviewCandidateRequest.model_validate({
+        "candidate_id": 890,
+        "status": "PENDING",
+        "target_segment_id": 17626,
+        "relative_position": "PREVIOUS",
+        "merge_segment_group": True,
+        "speaker_assignment": "PARTICIPANT",
+        "left_transcript_participant_id": 42,
+    })
+    unknown = ReviewCandidateRequest.model_validate({
+        "candidate_id": 890,
+        "status": "PENDING",
+        "target_segment_id": 17626,
+        "relative_position": "PREVIOUS",
+        "merge_segment_group": True,
+        "speaker_assignment": "UNKNOWN",
+    })
+
+    assert participant.speaker_assignment == "PARTICIPANT"
+    assert unknown.speaker_assignment == "UNKNOWN"
+
+
+def test_speaker_assignment_is_rejected_for_normal_candidate_flow():
+    request = ReviewCandidateRequest.model_validate({
+        "candidate_id": 131,
+        "status": "MODIFIED",
+        "reviewed_segment_id": 4631,
+        "speaker_assignment": "UNKNOWN",
+    })
+
+    with pytest.raises(Exception) as error:
+        _validate_speaker_assignment_scope(request, False)
+    assert error.value.status_code == 422
+
+
+def test_merge_segment_texts_preserves_all_parts_in_order():
+    rows = [
+        (17626, 59.94, 61.546, "Urmas Reinsalu Isamaast."),
+        (18733, 61.546, 63.42, "Tervist. Ja Lauri Läänemets"),
+    ]
+
+    assert _merge_segment_texts(rows) == "Urmas Reinsalu Isamaast.\nTervist. Ja Lauri Läänemets"
+
+
+def test_merge_text_comparison_uses_complete_group_text():
+    merged = "Urmas Reinsalu Isamaast.\nTervist. Ja Lauri Läänemets"
+
+    assert _merge_text_changed(merged, merged) is False
+    assert _merge_text_changed("Urmas Reinsalu Isamaast.\nTervist.", merged) is True
 
 
 def test_repeated_split_requires_modified_decision():
@@ -75,6 +144,29 @@ def test_logical_neighbor_target_validation_rejects_distant_next():
     with pytest.raises(Exception) as error:
         _validate_logical_neighbor_target("NEXT", 8180, previous_id, next_id)
     assert error.value.status_code == 422
+
+
+def test_split_neighbor_group_uses_facing_edge_for_previous_and_next():
+    ordered_ids = [8177, 17626, 18733, 8178, 8179]
+
+    assert _logical_group_edge("PREVIOUS", ordered_ids, {17626, 18733}) == 18733
+    assert _logical_group_edge("NEXT", ordered_ids, {8179}) == 8179
+    assert _logical_group_edge("PREVIOUS", ordered_ids, {17626, 8178}) is None
+
+
+def test_split_numbers_never_reuse_soft_deleted_history():
+    new_number, tail_numbers = _allocate_split_segment_numbers(14, [15, 16])
+
+    assert new_number == 15
+    assert tail_numbers == {15: 16, 16: 17}
+    assert 14 not in {new_number, *tail_numbers.values()}
+
+
+def test_repeated_split_allocates_after_new_historical_maximum():
+    new_number, tail_numbers = _allocate_split_segment_numbers(1203, [1202, 1204])
+
+    assert new_number == 1204
+    assert tail_numbers == {1202: 1205, 1204: 1206}
 
 
 def test_adjacent_segment_migration_preserves_required_provenance_fields():

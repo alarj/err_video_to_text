@@ -677,8 +677,19 @@ function renderReview() {
   const activeSplitIds = new Set(
     (candidate.reviewed_segments || []).map((entry) => entry.id).filter((id) => id !== candidate.segment.id),
   );
+  const neighborParts = (segment) => {
+    if (!segment) return [];
+    const sourceId = Number(segment.source_segment_id || segment.id);
+    return (review.data.segments || [])
+      .filter((entry) => Number(entry.id) === Number(segment.id) || Number(entry.source_segment_id) === sourceId)
+      .slice()
+      .sort((left, right) => Number(left.segment_number) - Number(right.segment_number) || Number(left.id) - Number(right.id));
+  };
+  const activeNeighborSegment = (review.data.segments || []).find((entry) => Number(entry.id) === Number(review.editingNeighborId));
+  const activeNeighborPartIds = new Set(neighborParts(activeNeighborSegment).map((entry) => Number(entry.id)));
   (review.data.segments || []).forEach((segment) => {
     if (activeSplitIds.has(segment.id)) return;
+    if (activeNeighborPartIds.has(Number(segment.id)) && Number(segment.id) !== Number(review.editingNeighborId)) return;
     const item = candidateBySegment.get(segment.id);
     const partOwner = candidatePartOwners.get(segment.id);
     if (!item && partOwner) return;
@@ -695,7 +706,7 @@ function renderReview() {
     if (item?.id === candidate.id) renderActiveReviewRow(row, segment, item, review, meta);
     else if (isActiveNeighbor) renderActiveReviewRow(row, segment, {
       ...candidate,
-      reviewed_segments: [],
+      reviewed_segments: neighborParts(segment),
     }, review, meta, {
       isNeighbor: true,
       segmentId: segment.id,
@@ -809,6 +820,10 @@ function appendSpeakerOptions(select, options, currentValue) {
   system.value = "__SYSTEM_NOTICE__";
   system.textContent = translate("review.system_notice");
   select.appendChild(system);
+  const unknown = document.createElement("option");
+  unknown.value = "__UNKNOWN_SPEAKER__";
+  unknown.textContent = translate("participants.unknown");
+  select.appendChild(unknown);
   options.forEach((entry, id) => {
     const option = document.createElement("option");
     option.value = String(id);
@@ -816,6 +831,16 @@ function appendSpeakerOptions(select, options, currentValue) {
     select.appendChild(option);
   });
   select.value = currentValue || "";
+}
+
+function speakerSelectionValue(segment) {
+  const speaker = reviewSpeakerIntervals(segment)[0];
+  if (speaker?.transcript_participant_id) return String(speaker.transcript_participant_id);
+  return segment?.segment_type === "SYSTEM_NOTICE" ? "__SYSTEM_NOTICE__" : "__UNKNOWN_SPEAKER__";
+}
+
+function participantIdFromSelection(value) {
+  return value && value !== "__SYSTEM_NOTICE__" && value !== "__UNKNOWN_SPEAKER__" ? Number(value) : null;
 }
 
 function appendReviewReasonToggle(container, candidateId, reason) {
@@ -838,6 +863,10 @@ function appendReviewReasonToggle(container, candidateId, reason) {
 
 function renderActiveReviewRow(row, segment, candidate, review, meta, editContext = {}) {
   row.classList.add("review-editing");
+  const persistedParts = (candidate.reviewed_segments || []).slice().sort((left, right) => Number(left.segment_number) - Number(right.segment_number) || Number(left.id) - Number(right.id));
+  if (editContext.isNeighbor && persistedParts.length > 0) {
+    meta.textContent = `${formatSeconds(persistedParts[0].start_second)}–${formatSeconds(persistedParts[persistedParts.length - 1].end_second)}`;
+  }
   const text = document.createElement("div");
   text.className = "review-inline-line";
   text.appendChild(meta);
@@ -847,7 +876,7 @@ function renderActiveReviewRow(row, segment, candidate, review, meta, editContex
   editor.value = segment.text || "";
   editor.rows = editor.value.split("\n").reduce((total, line) => total + Math.max(1, Math.ceil(line.length / 120)), 0);
   const options = reviewSpeakerOptions(review);
-  const currentSpeaker = firstSpeaker?.transcript_participant_id ? String(firstSpeaker.transcript_participant_id) : "__SYSTEM_NOTICE__";
+  const currentSpeaker = speakerSelectionValue(segment);
   const speakerSelect = document.createElement("select");
   speakerSelect.className = "review-inline-speaker";
   appendSpeakerOptions(speakerSelect, options, currentSpeaker);
@@ -873,9 +902,7 @@ function renderActiveReviewRow(row, segment, candidate, review, meta, editContex
     const activeSpeaker = editContext.persistedSpeaker || speakerSelect;
     const originalText = editContext.persistedPart ? (editContext.persistedPart.text || "") : (segment.text || "");
     const originalSpeaker = editContext.persistedPart
-      ? (reviewSpeakerIntervals(editContext.persistedPart)[0]?.transcript_participant_id
-        ? String(reviewSpeakerIntervals(editContext.persistedPart)[0].transcript_participant_id)
-        : "__SYSTEM_NOTICE__")
+      ? speakerSelectionValue(editContext.persistedPart)
       : currentSpeaker;
     saveInlineCandidate(candidate, activeEditor, activeSpeaker, splitState, save, originalText, originalSpeaker, editContext);
   }
@@ -884,14 +911,18 @@ function renderActiveReviewRow(row, segment, candidate, review, meta, editContex
     save.textContent = translate("review.confirm");
   }
   function activatePersistedPart(part) {
-    editContext.reviewedSegmentId = Number(part.id);
-    editContext.reviewedStartSecond = Number(part.start_second);
-    editContext.reviewedEndSecond = Number(part.end_second);
+    if (editContext.isNeighbor) {
+      editContext.segmentId = Number(part.id);
+      editContext.mergeSegmentGroup = false;
+    } else {
+      editContext.reviewedSegmentId = Number(part.id);
+      editContext.reviewedStartSecond = Number(part.start_second);
+      editContext.reviewedEndSecond = Number(part.end_second);
+    }
     editContext.persistedPart = part;
     editor.value = part.text || "";
     editor.rows = editor.value.split("\n").reduce((total, line) => total + Math.max(1, Math.ceil(line.length / 120)), 0);
-    const partSpeaker = reviewSpeakerIntervals(part)[0]?.transcript_participant_id
-      ? String(reviewSpeakerIntervals(part)[0].transcript_participant_id) : "__SYSTEM_NOTICE__";
+    const partSpeaker = speakerSelectionValue(part);
     speakerSelect.value = partSpeaker;
     splitState.position = null;
     splitState.left = null;
@@ -913,12 +944,12 @@ function renderActiveReviewRow(row, segment, candidate, review, meta, editContex
     splitState.rightSpeaker = rightSpeaker || defaultSpeaker;
     splitParts.replaceChildren();
     const definitions = persistedParts
-      ? persistedParts.map((part) => ({ side: null, value: part.text || "", selected: reviewSpeakerIntervals(part)[0]?.transcript_participant_id ? String(reviewSpeakerIntervals(part)[0].transcript_participant_id) : "__SYSTEM_NOTICE__", part }))
+      ? persistedParts.map((part) => ({ side: null, value: part.text || "", selected: speakerSelectionValue(part), part }))
       : [["left", splitState.left, splitState.leftSpeaker], ["right", splitState.right, splitState.rightSpeaker]].map(([side, value, selected]) => ({ side, value, selected, part: null }));
     definitions.forEach(({ side, value, selected, part }) => {
       const partRow = document.createElement("div"); partRow.className = "review-split-part";
       const partTime = document.createElement("span"); partTime.className = "review-split-time";
-      const proposedBoundary = editContext.reviewedSegmentId || persistedParts
+      const proposedBoundary = editContext.isNeighbor || editContext.reviewedSegmentId || persistedParts
         ? NaN
         : candidate.proposed_boundary_second == null
         ? NaN
@@ -971,6 +1002,8 @@ function renderActiveReviewRow(row, segment, candidate, review, meta, editContex
     const activeEditor = editContext.persistedEditor || editor;
     const position = activeEditor.selectionStart;
     if (!position || position >= activeEditor.value.length) return;
+    editContext.mergeSegmentGroup = false;
+    editContext.persistedGroupActive = false;
     if (editContext.persistedEditor) {
       editor.value = activeEditor.value;
       speakerSelect.value = editContext.persistedSpeaker?.value || currentSpeaker;
@@ -992,7 +1025,36 @@ function renderActiveReviewRow(row, segment, candidate, review, meta, editContex
   const splitReset = document.createElement("button");
   splitReset.type = "button"; splitReset.className = "secondary-button review-inline-reset";
   splitReset.textContent = translate("review.remove_split"); splitReset.hidden = true;
-  splitReset.addEventListener("click", () => { splitState.position = null; proposalLabel.hidden = true; splitParts.hidden = true; text.hidden = false; text.classList.remove("review-original-hidden"); editor.hidden = false; speakerSelect.hidden = false; splitButton.hidden = false; splitReset.hidden = true; });
+  splitReset.addEventListener("click", () => {
+    const mergingSavedGroup = editContext.isNeighbor && editContext.persistedGroupActive && persistedParts.length > 1;
+    if (mergingSavedGroup) {
+      editContext.segmentId = Number(persistedParts[0].id);
+      editContext.mergeSegmentGroup = true;
+      editContext.persistedPart = null;
+      editContext.persistedEditor = null;
+      editContext.persistedSpeaker = null;
+      editor.value = persistedParts.map((part) => part.text || "").join("\n");
+      editor.rows = editor.value.split("\n").reduce((total, line) => total + Math.max(1, Math.ceil(line.length / 120)), 0);
+      const firstPartSpeaker = reviewSpeakerIntervals(persistedParts[0])[0]?.transcript_participant_id;
+      speakerSelect.value = firstPartSpeaker ? String(firstPartSpeaker) : speakerSelectionValue(persistedParts[0]);
+      splitState.left = null;
+      splitState.right = null;
+      splitState.leftSpeaker = speakerSelect.value;
+      splitState.rightSpeaker = speakerSelect.value;
+    }
+    splitState.position = null;
+    proposalLabel.hidden = true;
+    splitParts.hidden = true;
+    text.hidden = false;
+    text.classList.remove("review-original-hidden");
+    editor.hidden = false;
+    speakerSelect.hidden = false;
+    splitButton.hidden = false;
+    splitReset.hidden = true;
+    if (!mergingSavedGroup) editContext.persistedGroupActive = false;
+    save.disabled = false;
+    save.textContent = translate("review.confirm");
+  });
   editor.addEventListener("input", markDirty);
   speakerSelect.addEventListener("change", () => { if (speakerSelect.value === "__SYSTEM_NOTICE__") speakerSelect.dataset.segmentType = "SYSTEM_NOTICE"; else speakerSelect.dataset.segmentType = "SPEECH"; markDirty(); });
   save.addEventListener("click", saveCurrent);
@@ -1003,20 +1065,18 @@ function renderActiveReviewRow(row, segment, candidate, review, meta, editContex
   splitButton.hidden = false;
   row.append(editHint, splitParts, controls);
   save.disabled = editContext.isNeighbor ? false : candidate.status !== "PENDING";
-  const persistedParts = (candidate.reviewed_segments || []).slice().sort((left, right) => Number(left.segment_number) - Number(right.segment_number) || Number(left.id) - Number(right.id));
-  if (candidate.status !== "PENDING" && persistedParts.length > 1) {
+  editContext.persistedGroupActive = Boolean(editContext.isNeighbor && persistedParts.length > 1);
+  if ((editContext.isNeighbor ? persistedParts.length > 1 : candidate.status !== "PENDING" && persistedParts.length > 1)) {
     const leftPart = persistedParts[0];
     const rightPart = persistedParts[1];
-    const leftSpeaker = reviewSpeakerIntervals(leftPart)[0]?.transcript_participant_id
-      ? String(reviewSpeakerIntervals(leftPart)[0].transcript_participant_id) : "__SYSTEM_NOTICE__";
-    const rightSpeaker = reviewSpeakerIntervals(rightPart)[0]?.transcript_participant_id
-      ? String(reviewSpeakerIntervals(rightPart)[0].transcript_participant_id) : "__SYSTEM_NOTICE__";
+    const leftSpeaker = speakerSelectionValue(leftPart);
+    const rightSpeaker = speakerSelectionValue(rightPart);
     const boundary = Number(leftPart.end_second);
     renderSplit(String(leftPart.text || "").length, leftPart.text, rightPart.text, leftSpeaker, rightSpeaker, boundary, Number(rightPart.end_second), persistedParts);
     splitButton.hidden = false;
     splitReset.hidden = false;
   }
-  if (candidate.status === "PENDING" && candidate.candidate_type === "SPEAKER_BOUNDARY" && Number.isInteger(candidate.proposed_split_at)) {
+  if (!editContext.isNeighbor && candidate.status === "PENDING" && candidate.candidate_type === "SPEAKER_BOUNDARY" && Number.isInteger(candidate.proposed_split_at)) {
     proposalLabel.textContent = translate("review.proposed_split");
     proposalLabel.hidden = false;
     row.insertBefore(proposalLabel, splitParts);
@@ -1062,12 +1122,20 @@ async function saveInlineCandidate(candidate, editor, speaker, splitState, butto
         segment_type: speaker.value === "__SYSTEM_NOTICE__" ? "SYSTEM_NOTICE" : "SPEECH",
         split_at: splitAt,
         left_transcript_participant_id: splitState.position !== null
-          ? (splitState.leftSpeaker && splitState.leftSpeaker !== "__SYSTEM_NOTICE__" ? Number(splitState.leftSpeaker) : null)
-          : (speaker.value && speaker.value !== "__SYSTEM_NOTICE__" ? Number(speaker.value) : null),
-        right_transcript_participant_id: splitState.position !== null && splitState.rightSpeaker && splitState.rightSpeaker !== "__SYSTEM_NOTICE__" ? Number(splitState.rightSpeaker) : null,
+          ? participantIdFromSelection(splitState.leftSpeaker)
+          : participantIdFromSelection(speaker.value),
+        right_transcript_participant_id: splitState.position !== null
+          ? participantIdFromSelection(splitState.rightSpeaker)
+          : null,
+        speaker_assignment: editContext.isNeighbor && editContext.mergeSegmentGroup
+          ? (speaker.value === "__UNKNOWN_SPEAKER__"
+            ? "UNKNOWN"
+            : (participantIdFromSelection(speaker.value) !== null ? "PARTICIPANT" : null))
+          : null,
         reviewed_segment_id: editContext.reviewedSegmentId || null,
         target_segment_id: editContext.isNeighbor ? editContext.segmentId : null,
         relative_position: editContext.isNeighbor ? editContext.relativePosition : null,
+        merge_segment_group: Boolean(editContext.isNeighbor && editContext.mergeSegmentGroup),
       }),
     });
     state.review.data = await request(`/jobs/${state.review.jobId}/review`);

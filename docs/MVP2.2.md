@@ -514,6 +514,53 @@ metadata seotakse kandidaadi enda otsusega.
 Korduva poolituse järel jääb kandidaat üle vaadatud olekusse; kui tulemus erineb
 süsteemi ettepanekust, on kandidaadi otsus `MODIFIED`, mitte uus `PENDING`.
 
+### Segmentide nummerdamine poolitamisel
+
+`transcript_segments.segment_number` on transkriptsiooniversiooni sees unikaalne
+ka lõpetatud ehk soft-delete'itud segmentide korral. Lõpetatud segmendi
+`segment_number` jääb ajaloo osaks: seda segmenti ei taasaktiveerita, selle
+numbrit ei muudeta ja sama numbrit ei anta uuele segmendile.
+
+Iga poolitus, sealhulgas varem ühendatud segmendi uuesti poolitamine, peab looma
+uue parempoolse segmendi uue reana. Enne nummerdamist lukustatakse asjaomane
+transkriptsiooniversioon ning leitakse selle versiooni suurim `segment_number`
+kõigi ridade seast, sõltumata `end_date` väärtusest. Uus number ja vajaduse
+korral järgnevate aktiivsete segmentide uued numbrid võetakse sellest
+ajaloolisest maksimumist kõrgemast vahemikust.
+
+Kui poolitatavale segmendile järgnevad aktiivsed segmendid, nummerdatakse
+aktiivne järelsaba samas tehingus ümber nii, et lõplik
+`ORDER BY segment_number` säilitab transkriptsiooni ajalise järjekorra:
+
+1. poolituse vasak osa säilitab olemasoleva rea ja numbri;
+2. uus parem osa saab väärtuse `senine_maximum + 1`;
+3. varem järgnenud aktiivsed segmendid saavad nende senises järjekorras
+   väärtused `senine_maximum + 2`, `senine_maximum + 3` jne;
+4. lõpetatud segmente ja nende numbreid ei muudeta.
+
+Nummerdusse võivad seetõttu jääda augud ning numbrid ei pea algama uuesti ühest
+ega olema järjestikused. `segment_number` ei ole püsiv segmendiidentifikaator;
+seosed kasutavad `transcript_segments.id` väärtust. Pelk ajutine suure nihke
+lisamine ja hilisem vana vahemiku lähedale tagasi nihutamine ei ole lubatud,
+sest see võib uuesti põrkuda lõpetatud rea reserveeritud numbriga.
+
+Nummerdamine, uue segmendi loomine, teksti ja aegade jaotamine,
+kõnelejaseoste loomine ning metadata salvestamine tehakse ühe tehinguna.
+Versiooni lukk peab välistama sama versiooni samaaegsed poolitused. Unikaalsus-,
+valideerimis- või salvestusvea korral tehakse täielik rollback, sealhulgas
+taastatakse aktiivsete segmentide varasem nummerdus.
+
+Kohustuslik regressioonijuhtum on järgmine: segment poolitatakse, poolitus
+eemaldatakse merge'iga nii, et üks alamsegment jääb soft-delete'ituks, ning
+aktiivne segment poolitatakse uuesti. Test peab kinnitama, et:
+
+- uus alamsegment ei kasuta ühegi aktiivse ega lõpetatud rea numbrit;
+- soft-delete'itud rida, selle number ja ajalugu ei muutu;
+- aktiivsete segmentide nummerdus vastab endiselt ajalisele järjekorrale;
+- tekst, ajad, `source_segment_id`, kõnelejaseosed ja metadata on õiged;
+- sama tulemuse uut alamsegmenti saab veel kord poolitada;
+- vea korral ei jää andmebaasi osaliselt muudetud nummerdust ega uusi ridu.
+
 Kandidaadi olek määratakse ainult süsteemi pakutud kandidaadi enda kohta:
 
 - kui süsteemi ettepanek oli vale ja kandidaat jäi muutmata, on kandidaat
@@ -740,6 +787,56 @@ Naaberlõigu parandamisel sisaldab sama päring `target_segment_id` ja
 `relative_position` väärtust (`PREVIOUS` või `NEXT`). Sellisel juhul rakendatakse
 muudatus ainult `REVIEWED_DRAFT` naaberlõigule, salvestatakse `USER_MODIFIED`
 metadata ning kandidaadi enda otsust ei muudeta.
+
+### Salvestatud naaberlõigu poolituse eemaldamine
+
+`split_at = null` tähendab tavalisel naaberlõigu salvestamisel ainult valitud
+`target_segment_id` segmendi muutmist. See ei sulge ega ühenda sama
+`source_segment_id` teisi aktiivseid alamsegmente.
+
+Salvestatud poolituse eemaldamine on eraldi eksplitsiitne tegevus, mille jaoks
+saadetakse `merge_segment_group = true`. Seda lippu võib kasutada ainult
+aktiivse kandidaadi lubatud `PREVIOUS` või `NEXT` naabergrupi puhul ning koos
+`split_at` väärtusega seda kasutada ei tohi.
+
+Merge'i kõneleja valik saadetakse eraldi väljal `speaker_assignment`: väärtus
+`PARTICIPANT` kasutab valideeritud `left_transcript_participant_id` väärtust,
+`UNKNOWN` kasutab reviewed-versiooni tundmatu kõneleja seost ning puuduv väärtus
+lubab rakendada süsteemi fallback-järjekorda. `SYSTEM_NOTICE` jääb eraldi
+`segment_type` väärtuseks ega tähenda tundmatut kõnelejat.
+
+Merge'i korral kontrollitakse, et kõik grupi aktiivsed osad kuuluvad samasse
+aktiivsesse `REVIEWED_DRAFT` versiooni, neil on sama algne segment ja nad on
+transkriptsiooni järjekorras üheselt järjestatavad. Grupi esimene aktiivne osa
+jääb segmendi identiteediks; ülejäänud osad ja nende aktiivsed kõnelejaseosed
+ning muutmismetadata lõpetatakse soft-delete'iga. Tekst säilitatakse kõigist
+osadest nende järjekorras ning ühendatud ajavahemik katab kogu grupi.
+
+Ühendatud aktiivsele segmendile jääb üks kõneleja: eelistatult grupi esimese
+aktiivse osa kõneleja, selle puudumisel algse automaatsegmendi domineeriv
+kõneleja ning viimase võimalusena `UNKNOWN`. Teiste osade kõnelejaseoseid ei
+kanta aktiivsele segmendile, kuid need jäävad lõpetatud alamsegmentidesse,
+muutmismetadatasse ja muutmata `AUTOMATIC_DRAFT` versiooni. Kasutaja võib
+ühendatud segmendi kõnelejat muuta või selle uuesti poolitada.
+
+Lokaalse, veel salvestamata poolituse eemaldamine toimub ainult kasutajaliideses
+ning ei tee API-päringut. Kõik salvestatud merge'i muudatused tehakse ühe
+andmebaasitehinguna; valideerimis- või salvestusvea korral tehakse täielik
+rollback. Kandidaadi enda otsus ning kandidaadi poolitamise ja korduvpoolitamise
+loogika jäävad naaberlõigu merge'ist sõltumatuks.
+
+Poolitamisel ei tohi uue rea `segment_number` korduda ka lõpetatud
+(soft-delete'itud) ajaloolise rea numbriga. Aktiivne transkriptsiooniversioon
+lukustatakse tehingu ajaks, uus parempoolne osa saab kogu versiooni ajaloolisest
+`MAX(segment_number)` väärtusest järgmise numbri ning aktiivne kronoloogiline
+järelsaba nummerdatakse samast värskest vahemikust edasi. Lõpetatud ajaloolisi
+ridu ei muudeta ega taasaktiveerita.
+
+Praeguses skeemis ei lisata merge'i jaoks uut `change_type` väärtust ega tehta
+andmebaasimigratsiooni. Ühendamisel lõpetatakse varasemate alamsegmentide
+aktiivne `SPLIT`-metadata ning säilitatakse ülejäänud ajalugu lõpetatud
+kirjetena; kasutaja tekstimuudatus ja kõneleja muutus märgitakse olemasolevate
+metadata-tüüpidega.
 
 `POST /finalize` kontrollib eeltingimusi ning loob muutumatu lõppversiooni ja
 selle artefaktid.
