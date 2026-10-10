@@ -28,6 +28,13 @@ def test_review_request_supports_an_adjacent_segment_target():
     assert request.relative_position == "NEXT"
 
 
+def test_rejected_neighbor_payload_keeps_text_but_rejected_candidate_does_not():
+    app_source = Path("frontend_dist/assets/app.js").read_text(encoding="utf-8")
+
+    assert 'text: editContext.isNeighbor ? splitText : (status === "REJECTED" ? null : splitText)' in app_source
+    assert 'text: status === "REJECTED" ? null : splitText' not in app_source
+
+
 def test_review_request_supports_repeated_split_target():
     request = ReviewCandidateRequest.model_validate({
         "candidate_id": 131,

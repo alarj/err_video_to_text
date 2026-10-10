@@ -1118,7 +1118,9 @@ async function saveInlineCandidate(candidate, editor, speaker, splitState, butto
     const result = await request(`/jobs/${state.review.jobId}/review-draft`, {
       method: "PUT",
       body: JSON.stringify({
-        candidate_id: candidate.id, status, text: status === "REJECTED" ? null : splitText,
+        candidate_id: candidate.id,
+        status,
+        text: editContext.isNeighbor ? splitText : (status === "REJECTED" ? null : splitText),
         segment_type: speaker.value === "__SYSTEM_NOTICE__" ? "SYSTEM_NOTICE" : "SPEECH",
         split_at: splitAt,
         left_transcript_participant_id: splitState.position !== null
