@@ -126,6 +126,43 @@ säilitada eraldi diagnostikavahendina.
 Oleku `WAITING_FOR_PARTICIPANTS` veebivaates seob kasutaja iga anonüümse
 `SPEAKER_nn` kõneleja päris osaleja või tundmatu kõnelejaga.
 
+### Osaleja vaikeprofiil ja saatehetke andmed
+
+`participants` on inimese püsiv identiteet ning sisaldab nime ja vabalt
+muudetavat kirjeldust. Ajas muutuvaid vaikeandmeid hoitakse eraldi
+`participant_details` tabelis: organisatsioon, amet, saateroll, erakond,
+poliitiku staatus ja poliitiline positsioon. Ühel inimesel võib olla mitu
+ajaliselt järjestikust detailiversiooni; uue vaikeprofiili loomisel suletakse
+vana versioon, mitte inimest ennast.
+
+`transcript_participants` on sellest eraldi saatehetke snapshot. See viitab
+inimesele `participant_id` kaudu, kuid ei viita ühelegi
+`participant_details` reale. Snapshot sisaldab ilmutatud väärtustena ametit,
+organisatsiooni, saaterolli, poliitiku staatust ja poliitilist positsiooni.
+Erakonna korral säilitatakse nii võimalik `party_id` analüüsideks kui ka
+`party_name` ilmutatud kujul. Rolli, organisatsiooni ega muude atribuutide
+lookup-ID-sid snapshot'is ei kasutata.
+
+Osaleja valimisel täidetakse kaart tema aktiivse vaikeprofiiliga. Kasutaja
+võib iga väärtust muuta ning muudatus salvestatakse alati ainult selle saate
+`transcript_participants` kirjesse. Kui väärtused erinevad vaikimisi
+pakutust, küsib UI eraldi, kas luua neist ka osaleja uus
+`participant_details` vaikeprofiil. Vaikimisi on vastus eitav. See võimaldab
+transkribeerida vanemaid saateid, ilma et tänane profiil muutuks: näiteks võib
+tänase poliitiku varasema saate snapshot'is olla ametiks kaitseväe juhataja,
+poliitiku väärtuseks `ei`, erakond puududa ning poliitilise positsiooni
+väärtuseks `none`.
+
+Erakond valitakse `parties` registrist. Poliitiku staatus valitakse väärtuste
+`jah` ja `ei` seast; poliitiline positsioon väärtuste `koalitsioon`,
+`opositsioon` ja `none` seast. `none` on vaikeväärtus ning peab olema alati
+uuesti valitav, et kasutaja saaks varasema valiku tagasi võtta. Erakonnal on
+eraldi tühi valik; selle valimisel salvestuvad nii `party_id` kui `party_name`
+väärtusega `NULL`, mitte tekstiline `N/A`. Saaterolli pakutakse vähemalt
+väärtustega `Saatejuht`, `Saatekülaline` ja `Intervjueeritav`. Kõik need
+väärtused jäävad snapshot'i tekstina ka juhul, kui dropdownide loendit hiljem
+ühtlustatakse.
+
 Iga anonüümse kõneleja kaardil näidatakse kolme ajaliselt hajutatud
 esinduslikku kohta saate eri osadest. Näidiskohad valitakse eelistatult
 piisavalt pikkade, ühe aktiivse kõneleja ja kõrge omistuskindlusega lõikude
@@ -153,7 +190,11 @@ Veebivaates on iga `SPEAKER_nn` kohta eraldi kaart, mis sisaldab:
 - anonüümset kõnelejalabel'it;
 - olemasoleva osaleja valikut;
 - uue osaleja lisamist;
-- vabatahtlikku rolli;
+- osaleja vaikeprofiiliga eeltäidetud ning muudetavaid saatehetke andmeid:
+  ametit, organisatsiooni, rolli, erakonda, poliitiku staatust ja poliitilist
+  positsiooni;
+- juhul, kui saatehetke andmeid muudeti, eraldi valikut nende salvestamiseks
+  osaleja uue vaikeprofiilina;
 - `UNCONFIRMED` ja `UNKNOWN` valikut;
 - kuni kolme näidislõigu teksti ning nähtavat algus- ja lõpuaega;
 - video- või audiomängijat.

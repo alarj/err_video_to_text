@@ -189,7 +189,13 @@ dd { margin: 0; line-height: 1.45; overflow-wrap: anywhere; }
 .history-status-column { display: flex; flex: 0 0 auto; flex-direction: column; align-items: flex-end; gap: 8px; }
 .history-primary-actions { display: flex; justify-content: flex-end; }
 .history-title { margin: 0; font-weight: 700; overflow-wrap: anywhere; }
+.history-title-date { margin-left: .55em; font-weight: 400; white-space: nowrap; }
+.history-inline-label { display: inline-block; padding: 2px 6px; border-radius: 4px; background: #e3e3e3; color: var(--funo-ink); }
 .history-meta { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 7px; color: var(--funo-muted); font-size: 13px; }
+.history-assigned-participants { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.history-assigned-participants-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 7px; color: var(--funo-muted); font: inherit; font-size: 13px; font-weight: 400; line-height: normal; }
+.history-participants-label { margin-right: 1px; }
+.history-participant-badge { color: var(--funo-ink); font: inherit; font-size: 13px; font-weight: 400; }
 .history-actions { margin-top: 10px; }
 .history-actions button { min-height: 36px; padding: 7px 11px; font-size: 13px; }
 .history-participant-action { margin-left: auto; }

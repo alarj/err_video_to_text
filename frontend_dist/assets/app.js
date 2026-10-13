@@ -22,7 +22,7 @@ const state = {
 const $ = (selector) => document.querySelector(selector);
 
 async function loadTranslations() {
-  const response = await fetch("./assets/i18n/et.json?v=4");
+  const response = await fetch("./assets/i18n/et.json?v=5");
   if (!response.ok) throw new Error("Translations could not be loaded");
   state.translations = await response.json();
   document.querySelectorAll("[data-i18n]").forEach((element) => {
@@ -1425,7 +1425,13 @@ function renderHistory() {
     head.className = "history-item-head";
     const title = document.createElement("div");
     title.className = "history-title";
-    title.textContent = job.title || job.submitted_url;
+    title.appendChild(document.createTextNode(job.title || job.submitted_url));
+    if (job.published_date) {
+      const date = document.createElement("span");
+      date.className = "history-title-date history-inline-label";
+      date.textContent = formatLocalDateOnly(job.published_date);
+      title.appendChild(date);
+    }
     const status = document.createElement("span");
     status.className = "status-badge";
     status.textContent = statusLabel(job.status);
@@ -1439,6 +1445,22 @@ function renderHistory() {
     statusColumn.className = "history-status-column";
     statusColumn.appendChild(status);
     head.append(title, statusColumn);
+    const assignedParticipants = job.participants?.assigned_names || [];
+    let participantsRow = null;
+    if (assignedParticipants.length) {
+      participantsRow = document.createElement("div");
+      participantsRow.className = "history-assigned-participants-row";
+      const label = document.createElement("span");
+      label.className = "history-participants-label";
+      label.textContent = `${translate("history.assigned_participants")}:`;
+      participantsRow.appendChild(label);
+      assignedParticipants.forEach((name) => {
+        const badge = document.createElement("span");
+        badge.className = "history-participant-badge history-inline-label";
+        badge.textContent = name;
+        participantsRow.appendChild(badge);
+      });
+    }
     const meta = document.createElement("div");
     meta.className = "history-meta";
     const id = document.createElement("span");
@@ -1451,7 +1473,9 @@ function renderHistory() {
       error.textContent = job.error_message;
       meta.appendChild(error);
     }
-    item.append(head, meta);
+    item.append(head);
+    if (participantsRow) item.appendChild(participantsRow);
+    item.appendChild(meta);
     const actions = document.createElement("div");
     actions.className = "history-actions";
     const infoButton = document.createElement("button");
@@ -1478,7 +1502,10 @@ function renderHistory() {
       const participantsButton = document.createElement("button");
       participantsButton.type = "button";
       participantsButton.className = "results-button history-participant-action";
-      participantsButton.textContent = translate("history.participants");
+      const participantCounts = job.participants;
+      participantsButton.textContent = participantCounts
+        ? `${translate("history.participants")} (${participantCounts.total}/${participantCounts.unresolved})`
+        : translate("history.participants");
       participantsButton.addEventListener("click", () => showParticipantReview(job.id));
       actions.appendChild(participantsButton);
     }
@@ -1486,7 +1513,10 @@ function renderHistory() {
       const reviewButton = document.createElement("button");
       reviewButton.type = "button";
       reviewButton.className = "results-button history-participant-action";
-      reviewButton.textContent = translate("history.review");
+      const reviewCounts = job.review;
+      reviewButton.textContent = reviewCounts
+        ? `${translate("history.review")} (${reviewCounts.total}/${reviewCounts.pending})`
+        : translate("history.review");
       reviewButton.addEventListener("click", () => showReview(job.id));
       actions.appendChild(reviewButton);
     }
@@ -1644,32 +1674,23 @@ async function loadHistory() {
 }
 
 async function refreshActiveHistory() {
-  const active = state.historyJobs.filter((job) => !STOP_POLL_STATUSES.has(job.status));
-  if (!active.length) return scheduleHistoryPolling();
-  const results = await Promise.allSettled(active.map((job) => request(`/jobs/${job.id}`)));
-  const byId = new Map();
-  results.forEach((result, index) => {
-    const jobId = active[index].id;
-    if (result.status === "fulfilled") {
-      byId.set(jobId, result.value);
-      state.staleHistoryJobIds.delete(jobId);
-    } else {
-      state.staleHistoryJobIds.add(jobId);
-    }
-  });
-  state.historyJobs = state.historyJobs.map((job) => byId.get(job.id) || job);
-  try {
-    state.queueStatus = await request("/queue-status");
-  } catch (_) {
-    state.queueStatus = null;
+  const [jobsResult, queueResult] = await Promise.allSettled([
+    request("/jobs"),
+    request("/queue-status"),
+  ]);
+  if (jobsResult.status === "fulfilled") {
+    state.historyJobs = jobsResult.value;
+    state.staleHistoryJobIds.clear();
+  } else {
+    state.historyJobs.forEach((job) => state.staleHistoryJobIds.add(job.id));
   }
+  state.queueStatus = queueResult.status === "fulfilled" ? queueResult.value : null;
   renderHistory();
   scheduleHistoryPolling();
 }
 
 function scheduleHistoryPolling() {
   if (state.historyTimer) window.clearTimeout(state.historyTimer);
-  if (!state.historyJobs.some((job) => !STOP_POLL_STATUSES.has(job.status))) return;
   state.historyTimer = window.setTimeout(() => {
     refreshActiveHistory().catch(() => {
       scheduleHistoryPolling();

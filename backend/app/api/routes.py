@@ -188,10 +188,8 @@ def list_jobs(limit: int = Query(default=100, ge=1, le=200)) -> list[dict[str, o
     with connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            """SELECT p.id, src.url, NVL(src.title, m.title), p.status, p.created, p.finished_at,
-                      (SELECT a.error_code FROM activities a
-                       WHERE a.process_id = p.id AND a.result = 'ERROR' AND a.end_date IS NULL
-                       ORDER BY a.id DESC FETCH FIRST 1 ROW ONLY),
+            """SELECT p.id, p.status, p.created, src.url,
+                      NVL(src.title, m.title), src.published_date,
                       (SELECT a.error_message FROM activities a
                        WHERE a.process_id = p.id AND a.result = 'ERROR' AND a.end_date IS NULL
                        ORDER BY a.id DESC FETCH FIRST 1 ROW ONLY)
@@ -203,7 +201,111 @@ def list_jobs(limit: int = Query(default=100, ge=1, le=200)) -> list[dict[str, o
                 FETCH FIRST :limit ROWS ONLY""",
             {"limit": limit},
         )
-        return [_job_summary(row) for row in cursor.fetchall()]
+        rows = cursor.fetchall()
+        if not rows:
+            return []
+
+        job_ids = [int(row[0]) for row in rows]
+        id_binds = {f"job_id_{index}": job_id for index, job_id in enumerate(job_ids)}
+        id_placeholders = ", ".join(f":job_id_{index}" for index in range(len(job_ids)))
+
+        review_counts: dict[int, dict[str, int]] = {}
+        cursor.execute(
+            f"""SELECT v.process_id,
+                              COUNT(rc.id),
+                              SUM(CASE WHEN rc.status = 'PENDING' THEN 1 ELSE 0 END)
+                         FROM review_candidates rc
+                         JOIN transcript_segments s
+                           ON s.id = rc.transcript_segment_id
+                          AND s.end_date IS NULL
+                         JOIN transcript_versions v
+                           ON v.id = s.transcript_version_id
+                          AND v.end_date IS NULL
+                         JOIN processes p
+                           ON p.id = v.process_id
+                          AND p.end_date IS NULL
+                        WHERE rc.end_date IS NULL
+                          AND v.process_id IN ({id_placeholders})
+                        GROUP BY v.process_id""",
+            id_binds,
+        )
+        for process_id, total, pending in cursor.fetchall():
+            review_counts[int(process_id)] = {"total": int(total), "pending": int(pending or 0)}
+
+        participant_counts: dict[int, dict[str, int]] = {}
+        participant_version_cte = f"""
+            WITH participant_versions AS (
+                SELECT tv.id, tv.process_id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY tv.process_id
+                           ORDER BY tv.version_number DESC, tv.id DESC
+                       ) AS version_rank
+                  FROM transcript_versions tv
+                 WHERE tv.end_date IS NULL
+                   AND tv.process_id IN ({id_placeholders})
+                   AND EXISTS (
+                       SELECT 1
+                         FROM transcript_participants tp0
+                        WHERE tp0.transcript_version_id = tv.id
+                          AND tp0.end_date IS NULL
+                   )
+            )
+        """
+        cursor.execute(
+            participant_version_cte + """
+            SELECT pv.process_id,
+                   COUNT(tp.id),
+                   SUM(CASE WHEN tp.mapping_status = 'UNCONFIRMED' THEN 1 ELSE 0 END)
+              FROM participant_versions pv
+              JOIN transcript_participants tp
+                ON tp.transcript_version_id = pv.id
+               AND tp.end_date IS NULL
+             WHERE pv.version_rank = 1
+             GROUP BY pv.process_id""",
+            id_binds,
+        )
+        for process_id, total, unresolved in cursor.fetchall():
+            participant_counts[int(process_id)] = {
+                "total": int(total),
+                "unresolved": int(unresolved or 0),
+            }
+
+        assigned_names: dict[int, list[str]] = defaultdict(list)
+        cursor.execute(
+            participant_version_cte + """
+            , confirmed_participants AS (
+                SELECT DISTINCT pv.process_id, p.id AS participant_id, p.name AS participant_name
+                  FROM participant_versions pv
+                  JOIN transcript_participants tp
+                    ON tp.transcript_version_id = pv.id
+                   AND tp.end_date IS NULL
+                   AND tp.mapping_status = 'CONFIRMED'
+                  JOIN participants p
+                    ON p.id = tp.participant_id
+                   AND p.end_date IS NULL
+                 WHERE pv.version_rank = 1
+            )
+            SELECT process_id, participant_id, participant_name
+              FROM confirmed_participants
+             ORDER BY process_id,
+                      NLSSORT(participant_name, 'NLS_SORT=ESTONIAN'),
+                      participant_id""",
+            id_binds,
+        )
+        for process_id, _participant_id, participant_name in cursor.fetchall():
+            assigned_names[int(process_id)].append(str(participant_name))
+
+        result = []
+        for row in rows:
+            process_id = int(row[0])
+            summary = _job_summary(row)
+            summary["review"] = review_counts.get(process_id, {"total": 0, "pending": 0})
+            summary["participants"] = {
+                **participant_counts.get(process_id, {"total": 0, "unresolved": 0}),
+                "assigned_names": assigned_names.get(process_id, []),
+            }
+            result.append(summary)
+        return result
 
 
 @router.get("/queue-status")
@@ -1718,9 +1820,9 @@ def download_job_artifact(job_id: int, artifact_id: int):
 
 def _job_summary(row) -> dict[str, object]:
     return {
-        "id": row[0], "submitted_url": row[1], "title": row[2], "status": row[3],
-        "submitted_at": _utc_iso(row[4]), "resolved_at": _utc_iso(row[5]),
-        "error_code": row[6], "error_message": row[7],
+        "id": row[0], "status": row[1], "submitted_at": _utc_iso(row[2]),
+        "submitted_url": row[3], "title": row[4],
+        "published_date": _utc_iso(row[5]), "error_message": row[6],
     }
 
 
