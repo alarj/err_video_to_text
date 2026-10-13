@@ -19,10 +19,16 @@ erDiagram
     ARTIFACTS ||--o{ TRANSCRIPT_ARTIFACTS : linked
     TRANSCRIPT_VERSIONS ||--o{ TRANSCRIPT_PARTICIPANTS : contains
     PARTICIPANTS ||--o{ TRANSCRIPT_PARTICIPANTS : identifies
+    PARTICIPANTS ||--o{ PARTICIPANT_DETAILS : has_history
+    PARTIES ||--o{ PARTICIPANT_DETAILS : default_party
+    PARTIES ||--o{ TRANSCRIPT_PARTICIPANTS : snapshot_party
     TRANSCRIPT_VERSIONS ||--o{ TRANSCRIPT_SEGMENTS : contains
+    TRANSCRIPT_SEGMENTS ||--o{ TRANSCRIPT_SEGMENTS : source_segment
     TRANSCRIPT_SEGMENTS ||--o{ TRANSCRIPT_SEGMENT_SPEAKERS : has
     TRANSCRIPT_PARTICIPANTS ||--o{ TRANSCRIPT_SEGMENT_SPEAKERS : assigned
     TRANSCRIPT_SEGMENTS ||--o{ REVIEW_CANDIDATES : flagged
+    TRANSCRIPT_SEGMENTS ||--o{ TRANSCRIPT_SEGMENT_MODIFICATIONS : modified
+    REVIEW_CANDIDATES ||--o{ TRANSCRIPT_SEGMENT_MODIFICATIONS : triggers
 
     SOURCES {
         NUMBER id PK
@@ -101,15 +107,34 @@ erDiagram
         NUMBER id PK
         VARCHAR2 name
         VARCHAR2 description
+    }
+    PARTICIPANT_DETAILS {
+        NUMBER id PK
+        NUMBER participant_id FK
         VARCHAR2 organisation
         VARCHAR2 occupation
+        VARCHAR2 role
+        NUMBER party_id FK
+        CHAR is_politician
+        VARCHAR2 political_alignment
+    }
+    PARTIES {
+        NUMBER id PK
+        VARCHAR2 name
+        VARCHAR2 short_name
     }
     TRANSCRIPT_PARTICIPANTS {
         NUMBER id PK
         NUMBER transcript_version_id FK
         VARCHAR2 speaker_label
         NUMBER participant_id FK
+        VARCHAR2 organisation
+        VARCHAR2 occupation
         VARCHAR2 role
+        NUMBER party_id FK
+        VARCHAR2 party_name
+        CHAR is_politician
+        VARCHAR2 political_alignment
         VARCHAR2 mapping_status
     }
     TRANSCRIPT_SEGMENTS {
@@ -119,6 +144,8 @@ erDiagram
         NUMBER start_second
         NUMBER end_second
         VARCHAR2 text
+        VARCHAR2 segment_type
+        NUMBER source_segment_id FK
     }
     TRANSCRIPT_SEGMENT_SPEAKERS {
         NUMBER id PK
@@ -137,6 +164,14 @@ erDiagram
         VARCHAR2 decision
         TIMESTAMP decision_at
     }
+    TRANSCRIPT_SEGMENT_MODIFICATIONS {
+        NUMBER id PK
+        NUMBER transcript_segment_id FK
+        NUMBER trigger_candidate_id FK
+        VARCHAR2 relative_position
+        VARCHAR2 change_type
+        VARCHAR2 status
+    }
 ```
 
 ## Protsessi ja tegevuse reeglid
@@ -147,6 +182,8 @@ erDiagram
   BPMN-i lõpusündmuseni jõudmisel.
 - Aktiivse protsessi `status` on parajasti lõpetamata tegevuse
   `activity_type`. Lõppenud protsessi staatus on `FINISHED` või `CANCELLED`.
+- MVP2.2 protsessi lubatud aktiivne olek sisaldab ka
+  `MATERIALIZING_AUTOMATIC_DRAFT`.
 - Tegevusel ei ole muutuvat staatust. Tegevusel on algus, lõpp ja tulemus.
 - Tegevuse `result` tekib ainult koos `finished_at` väärtusega. Lubatud
   tulemused on `OK`, `ERROR` ja `CANCELLED`. Pooleli tegevusel on mõlemad
@@ -175,6 +212,14 @@ tegevuse puhul `NULL`.
 `activities` peab sisaldama unikaalsust `(process_id, id)` ning võõrvõti
 `(process_id, previous_activity_id)` peab viitama sama tabeli samale
 `process_id` väärtusele. Tegevus ei tohi viidata teise protsessi tegevusele.
+
+`transcript_segments.segment_type` väärtus on `SPEECH` või `SYSTEM_NOTICE`.
+`source_segment_id` viitab algse automaatse drafti segmendile, kui segment on
+sellest tuletatud; algse segmendi puhul on väärtus `NULL`.
+
+MVP2.2 tegevuste lubatud tüübid on `DOWNLOADING`, `DIARIZING`,
+`MATERIALIZING_AUTOMATIC_DRAFT`, `WAITING_FOR_PARTICIPANTS`, `IN_REVIEW` ja
+`WAITING_FOR_RESULT`.
 
 ## Seotud protsesside tehniline reegel
 
@@ -211,6 +256,48 @@ Aktiivne kirje vastab tingimusele:
 end_date IS NULL OR end_date > SYSDATE
 ```
 
+## Osaleja profiil ja saatehetke snapshot
+
+`participants` kirjeldab inimest kui püsivat identiteeti. Seal on inimese
+`name` ja vabalt muudetav `description`; see tabel ei sisalda ajas muutuvaid
+töö-, poliitilisi ega saaterolli andmeid.
+
+`participant_details` on `participants`-ist sõltumatu ajalooliste
+vaikeprofiilide ahel. Ühel osalejal on vähemalt üks ja võib olla mitu
+ajavahemikuga detailikirjet. Detail sisaldab `organisation`, `occupation`,
+`role`, `party_id`, `is_politician` ja `political_alignment` väärtusi. Uue
+vaikeprofiili salvestamisel vana detailikirje suletakse `end_date`-ga ning
+luuakse uus; sama osaleja aktiivsete detailikirjete kehtivusajad ei tohi
+kattuda.
+
+`transcript_participants` ei viita `participant_details` reale ega ole selle
+ajaloo osa. See on transkriptsiooniversiooni saatehetke snapshot: peale
+`participant_id` säilitatakse seal ilmutatud kujul `organisation`,
+`occupation`, `role`, `party_name`, `is_politician` ja
+`political_alignment`. `party_id` võib olla lisaks viide `parties` tabelile
+analüüside jaoks, kuid `party_name` peab jääma snapshot'i ka siis, kui
+erakonna nimi või registrikirje hiljem muutub. Muud atribuudid ei tohi olla
+rolli, organisatsiooni või muu lookup-tabeli ID-d.
+
+Seetõttu võib vana saate `transcript_participants` rida teadlikult erineda
+inimese samal ajal aktiivsest või praegusest vaikeprofiilist. Näiteks võib
+tänase poliitiku nelja aasta taguse intervjuu snapshot'is olla ametiks
+`Kaitseväe juhataja`, poliitiku väärtuseks `ei`, erakond puududa ning
+poliitilise positsiooni väärtuseks `none`; inimese tänased vaikeandmed sellest
+ei muutu. `none` on poliitilise positsiooni vaikeväärtus ja peab olema hiljem
+uuesti valitav. Erakonna tühjendamisel on nii `party_id` kui `party_name`
+väärtus `NULL`; tekstilist `N/A` erakonna jaoks ei kasutata.
+
+`parties` on erakondade ühine register. Vähemalt `id`, `name` ja `short_name`
+on seal tsentraalselt hallatavad; nii ei põhine erakondade kaupa tehtav
+analüüs vabateksti eri kirjapiltidel.
+
+Lugemiseks pakub Oracle'i vaade `participant_current_v` ühe rea aktiivse
+osaleja kohta. Vaade ühendab aktiivse `participants` rea, sellele vastava
+aktiivse `participant_details` rea ja vajaduse korral erakonna nime. Vaade on
+ainult otsingu ning vormi eeltäitmise mugavuskiht: uue osaleja ja
+detailiversiooni loomine toimub alus-tabelites selges kirjutustehingus.
+
 ## Transkriptsiooniversioonide lubatud väärtused
 
 `transcript_versions.version_type`:
@@ -231,3 +318,6 @@ UNKNOWN
 
 Erandina võib `transcript_participants.participant_id` olla `NULL`, kuni
 kasutaja kinnitab päris inimese või märgib kõneleja tundmatuks.
+
+`transcript_participants.role` võib samuti olla `NULL`, kuni kasutaja on
+osalise rolli määranud.

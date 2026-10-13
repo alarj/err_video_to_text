@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import mimetypes
 import os
 import sys
 import time
@@ -16,12 +14,13 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 from app.database.oracle import connection  # noqa: E402
 from app.services.resolver import resolve  # noqa: E402
+from app.services.materializer import materialize, prepare  # noqa: E402
 from err2text.config import ensure_external_output, settings  # noqa: E402
 from err2text.models import RunContext  # noqa: E402
 from err2text.pipeline import complete_diarization, prepare_media, resume_prepared  # noqa: E402
 
 
-EXECUTABLE_ACTIVITIES = ("DOWNLOADING", "DIARIZING")
+EXECUTABLE_ACTIVITIES = ("DOWNLOADING", "DIARIZING", "MATERIALIZING_AUTOMATIC_DRAFT")
 TERMINAL_PROCESS_STATUSES = ("FINISHED", "CANCELLED")
 
 
@@ -99,7 +98,10 @@ def process_one(activity: dict[str, object]) -> None:
         if activity["activity_type"] == "DIARIZING":
             prepared = resume_prepared(context, settings())
             result_dir = complete_diarization(prepared, context, settings())
-            finish_success(process_id, activity_id, result_dir)
+            transition_to_materializing(process_id, activity_id)
+            return
+        if activity["activity_type"] == "MATERIALIZING_AUTOMATIC_DRAFT":
+            materialize_automatic_draft(process_id, activity_id, output_dir)
             return
         raise RuntimeError(f"Unsupported worker activity: {activity['activity_type']}")
     except Exception as exc:
@@ -133,9 +135,38 @@ def transition_to_diarizing(process_id: int, previous_activity_id: int) -> int:
         return activity_id
 
 
-def finish_success(process_id: int, activity_id: int, result_dir: Path) -> None:
+def transition_to_materializing(process_id: int, previous_activity_id: int) -> int:
     with connection() as conn:
         cursor = conn.cursor()
+        cursor.execute(
+            """UPDATE activities
+                  SET finished_at = SYSTIMESTAMP, result = 'OK', last_updated = SYSTIMESTAMP
+                WHERE id = :activity_id AND process_id = :process_id
+                  AND finished_at IS NULL""",
+            {"activity_id": previous_activity_id, "process_id": process_id},
+        )
+        activity_var = cursor.var(int)
+        cursor.execute(
+            """INSERT INTO activities
+                   (process_id, previous_activity_id, activity_type, started_at)
+                VALUES (:process_id, :previous_activity_id, 'MATERIALIZING_AUTOMATIC_DRAFT', SYSTIMESTAMP)
+                RETURNING id INTO :activity_id""",
+            {"process_id": process_id, "previous_activity_id": previous_activity_id, "activity_id": activity_var},
+        )
+        activity_id = int(activity_var.getvalue()[0])
+        cursor.execute(
+            "UPDATE processes SET status = 'MATERIALIZING_AUTOMATIC_DRAFT', last_updated = SYSTIMESTAMP WHERE id = :process_id",
+            {"process_id": process_id},
+        )
+        conn.commit()
+        return activity_id
+
+
+def materialize_automatic_draft(process_id: int, activity_id: int, result_dir: Path) -> None:
+    prepared = prepare(result_dir)
+    with connection() as conn:
+        cursor = conn.cursor()
+        materialize(cursor, process_id, activity_id, prepared)
         cursor.execute(
             """UPDATE activities
                   SET finished_at = SYSTIMESTAMP, result = 'OK', last_updated = SYSTIMESTAMP
@@ -153,42 +184,6 @@ def finish_success(process_id: int, activity_id: int, result_dir: Path) -> None:
             "UPDATE processes SET status = 'WAITING_FOR_PARTICIPANTS', last_updated = SYSTIMESTAMP WHERE id = :process_id",
             {"process_id": process_id},
         )
-        version_var = cursor.var(int)
-        cursor.execute(
-            """INSERT INTO transcript_versions
-                   (process_id, activity_id, version_number, version_type, status)
-                VALUES (:process_id, :activity_id, 1, 'AUTOMATIC_DRAFT', 'DRAFT')
-                RETURNING id INTO :version_id""",
-            {"process_id": process_id, "activity_id": activity_id, "version_id": version_var},
-        )
-        version_id = int(version_var.getvalue()[0])
-        for path in sorted(result_dir.iterdir()):
-            if not path.is_file():
-                continue
-            artifact_var = cursor.var(int)
-            cursor.execute(
-                """INSERT INTO artifacts (artifact_type, path, content_type, size_byte, sha256)
-                    VALUES (:artifact_type, :path, :content_type, :size_byte, :sha256)
-                    RETURNING id INTO :artifact_id""",
-                {
-                    "artifact_type": path.suffix.lstrip(".").upper() or "FILE",
-                    "path": str(path),
-                    "content_type": mimetypes.guess_type(path.name)[0] or "application/octet-stream",
-                    "size_byte": path.stat().st_size,
-                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-                    "artifact_id": artifact_var,
-                },
-            )
-            artifact_id = int(artifact_var.getvalue()[0])
-            cursor.execute(
-                "INSERT INTO activity_artifacts (activity_id, artifact_id) VALUES (:activity_id, :artifact_id)",
-                {"activity_id": activity_id, "artifact_id": artifact_id},
-            )
-            if path.suffix.lower() in {".vtt", ".json", ".md"}:
-                cursor.execute(
-                    "INSERT INTO transcript_artifacts (transcript_version_id, artifact_id) VALUES (:version_id, :artifact_id)",
-                    {"version_id": version_id, "artifact_id": artifact_id},
-                )
         conn.commit()
 
 
@@ -254,8 +249,10 @@ def run_loop() -> None:
     diarization_workers = max_workers()
     download_futures: set[Future[None]] = set()
     diarization_futures: set[Future[None]] = set()
+    materialization_futures: set[Future[None]] = set()
     with (ThreadPoolExecutor(thread_name_prefix="err2text-download") as download_executor,
-          ThreadPoolExecutor(max_workers=diarization_workers, thread_name_prefix="err2text-diarization") as diarization_executor):
+          ThreadPoolExecutor(max_workers=diarization_workers, thread_name_prefix="err2text-diarization") as diarization_executor,
+          ThreadPoolExecutor(max_workers=1, thread_name_prefix="err2text-materialization") as materialization_executor):
         while True:
             reconcile_waiting_processes()
             while True:
@@ -268,13 +265,20 @@ def run_loop() -> None:
                 if activity is None:
                     break
                 diarization_futures.add(diarization_executor.submit(process_one, activity))
+            while len(materialization_futures) < 1:
+                activity = claim_next_activity("MATERIALIZING_AUTOMATIC_DRAFT")
+                if activity is None:
+                    break
+                materialization_futures.add(materialization_executor.submit(process_one, activity))
             done_downloads = {future for future in download_futures if future.done()}
             done_diarizations = {future for future in diarization_futures if future.done()}
-            for future in done_downloads | done_diarizations:
+            done_materializations = {future for future in materialization_futures if future.done()}
+            for future in done_downloads | done_diarizations | done_materializations:
                 future.result()
             download_futures -= done_downloads
             diarization_futures -= done_diarizations
-            if not download_futures and not diarization_futures:
+            materialization_futures -= done_materializations
+            if not download_futures and not diarization_futures and not materialization_futures:
                 time.sleep(5)
             else:
                 time.sleep(1)
@@ -282,7 +286,11 @@ def run_loop() -> None:
 
 if __name__ == "__main__":
     if "--once" in sys.argv:
-        activity = claim_next_activity("DOWNLOADING") or claim_next_activity("DIARIZING")
+        activity = (
+            claim_next_activity("DOWNLOADING")
+            or claim_next_activity("DIARIZING")
+            or claim_next_activity("MATERIALIZING_AUTOMATIC_DRAFT")
+        )
         if activity is not None:
             process_one(activity)
         reconcile_waiting_processes()

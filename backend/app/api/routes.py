@@ -1,18 +1,115 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime, timezone
+from decimal import Decimal, ROUND_HALF_UP
+from hashlib import sha256
+import json
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 
 from app.database.oracle import connection
-from app.schemas import CreateJobRequest, JobResponse, ResolveRequest
+from app.schemas import (
+    CreateJobRequest,
+    JobResponse,
+    ParticipantCreateRequest,
+    ReviewCandidateRequest,
+    ParticipantReviewRequest,
+    ResolveRequest,
+)
 from app.services.resolver import resolve
+from app.services.participant_review import select_speaker_samples
 from err2text.errors import PipelineError
+from err2text.sentence_boundary_review.runner import suggest_sentence_split
 
 router = APIRouter()
+
+_SECOND_QUANTUM = Decimal("0.001")
+
+
+def _normalize_second(value: object) -> Decimal:
+    """Match the NUMBER(12,3) precision used by stored time values."""
+    return Decimal(str(value)).quantize(_SECOND_QUANTUM, rounding=ROUND_HALF_UP)
+
+
+def _normalize_review_text(value: object) -> str:
+    """Compare review text independently of whitespace-only formatting."""
+    return " ".join(str(value or "").split())
+
+
+def _merge_segment_texts(rows: list[tuple[object, ...]]) -> str:
+    """Join active segment texts in transcript order without dropping content."""
+    return "\n".join(str(row[3] or "") for row in rows)
+
+
+def _merge_text_changed(new_text: object, merged_text: object) -> bool:
+    """Detect edits against the complete lossless merge, not the first child."""
+    return _normalize_review_text(new_text) != _normalize_review_text(merged_text)
+
+
+def _allocate_split_segment_numbers(historical_max: int, active_tail_ids: list[int]) -> tuple[int, dict[int, int]]:
+    """Allocate fresh numbers without reusing numbers from soft-deleted rows.
+
+    The new right-hand child gets the first number after the historical
+    maximum.  Active rows after the split are moved into the following fresh
+    range in their existing chronological order.  Tombstoned rows are never
+    included in, or changed by, this allocation.
+    """
+    first_new_number = int(historical_max) + 1
+    tail_numbers = {
+        int(segment_id): first_new_number + index + 1
+        for index, segment_id in enumerate(active_tail_ids)
+    }
+    return first_new_number, tail_numbers
+
+
+def _logical_neighbor_ids(ordered_ids: list[int], group_ids: set[int]) -> tuple[int | None, int | None]:
+    """Return the nearest segments outside a candidate's complete reviewed group."""
+    group_positions = [index for index, segment_id in enumerate(ordered_ids) if segment_id in group_ids]
+    if not group_positions:
+        return None, None
+    first = min(group_positions)
+    last = max(group_positions)
+    previous_id = ordered_ids[first - 1] if first > 0 else None
+    next_id = ordered_ids[last + 1] if last + 1 < len(ordered_ids) else None
+    return previous_id, next_id
+
+
+def _logical_group_edge(relative_position: str, ordered_ids: list[int], group_ids: set[int]) -> int | None:
+    """Return the edge of a contiguous neighbor group facing the candidate."""
+    positions = [index for index, segment_id in enumerate(ordered_ids) if segment_id in group_ids]
+    if not positions or max(positions) - min(positions) + 1 != len(group_ids):
+        return None
+    return ordered_ids[max(positions)] if relative_position == "PREVIOUS" else ordered_ids[min(positions)]
+
+
+def _validate_logical_neighbor_target(
+    relative_position: str,
+    target_segment_id: int,
+    previous_id: int | None,
+    next_id: int | None,
+) -> None:
+    expected_target_id = previous_id if relative_position == "PREVIOUS" else next_id
+    if expected_target_id is None or int(target_segment_id) != expected_target_id:
+        raise HTTPException(status_code=422, detail="Target segment is not an immediate candidate neighbor")
+
+
+def _validate_review_target(request: ReviewCandidateRequest) -> None:
+    """Repeated edits of a reviewed child are always a modified decision."""
+    if request.reviewed_segment_id is not None and request.status != "MODIFIED":
+        raise HTTPException(
+            status_code=422,
+            detail="reviewed_segment_id edits require status MODIFIED",
+        )
+
+
+def _validate_speaker_assignment_scope(request: ReviewCandidateRequest, is_neighbor_merge: bool) -> None:
+    """Speaker assignment is an explicit operation for saved neighbor merges only."""
+    if request.speaker_assignment is not None and not is_neighbor_merge:
+        raise HTTPException(status_code=422, detail="speaker_assignment is only valid for a neighbor merge")
 
 
 def _utc_iso(value: datetime | None) -> str | None:
@@ -91,10 +188,8 @@ def list_jobs(limit: int = Query(default=100, ge=1, le=200)) -> list[dict[str, o
     with connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            """SELECT p.id, src.url, NVL(src.title, m.title), p.status, p.created, p.finished_at,
-                      (SELECT a.error_code FROM activities a
-                       WHERE a.process_id = p.id AND a.result = 'ERROR' AND a.end_date IS NULL
-                       ORDER BY a.id DESC FETCH FIRST 1 ROW ONLY),
+            """SELECT p.id, p.status, p.created, src.url,
+                      NVL(src.title, m.title), src.published_date,
                       (SELECT a.error_message FROM activities a
                        WHERE a.process_id = p.id AND a.result = 'ERROR' AND a.end_date IS NULL
                        ORDER BY a.id DESC FETCH FIRST 1 ROW ONLY)
@@ -106,7 +201,111 @@ def list_jobs(limit: int = Query(default=100, ge=1, le=200)) -> list[dict[str, o
                 FETCH FIRST :limit ROWS ONLY""",
             {"limit": limit},
         )
-        return [_job_summary(row) for row in cursor.fetchall()]
+        rows = cursor.fetchall()
+        if not rows:
+            return []
+
+        job_ids = [int(row[0]) for row in rows]
+        id_binds = {f"job_id_{index}": job_id for index, job_id in enumerate(job_ids)}
+        id_placeholders = ", ".join(f":job_id_{index}" for index in range(len(job_ids)))
+
+        review_counts: dict[int, dict[str, int]] = {}
+        cursor.execute(
+            f"""SELECT v.process_id,
+                              COUNT(rc.id),
+                              SUM(CASE WHEN rc.status = 'PENDING' THEN 1 ELSE 0 END)
+                         FROM review_candidates rc
+                         JOIN transcript_segments s
+                           ON s.id = rc.transcript_segment_id
+                          AND s.end_date IS NULL
+                         JOIN transcript_versions v
+                           ON v.id = s.transcript_version_id
+                          AND v.end_date IS NULL
+                         JOIN processes p
+                           ON p.id = v.process_id
+                          AND p.end_date IS NULL
+                        WHERE rc.end_date IS NULL
+                          AND v.process_id IN ({id_placeholders})
+                        GROUP BY v.process_id""",
+            id_binds,
+        )
+        for process_id, total, pending in cursor.fetchall():
+            review_counts[int(process_id)] = {"total": int(total), "pending": int(pending or 0)}
+
+        participant_counts: dict[int, dict[str, int]] = {}
+        participant_version_cte = f"""
+            WITH participant_versions AS (
+                SELECT tv.id, tv.process_id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY tv.process_id
+                           ORDER BY tv.version_number DESC, tv.id DESC
+                       ) AS version_rank
+                  FROM transcript_versions tv
+                 WHERE tv.end_date IS NULL
+                   AND tv.process_id IN ({id_placeholders})
+                   AND EXISTS (
+                       SELECT 1
+                         FROM transcript_participants tp0
+                        WHERE tp0.transcript_version_id = tv.id
+                          AND tp0.end_date IS NULL
+                   )
+            )
+        """
+        cursor.execute(
+            participant_version_cte + """
+            SELECT pv.process_id,
+                   COUNT(tp.id),
+                   SUM(CASE WHEN tp.mapping_status = 'UNCONFIRMED' THEN 1 ELSE 0 END)
+              FROM participant_versions pv
+              JOIN transcript_participants tp
+                ON tp.transcript_version_id = pv.id
+               AND tp.end_date IS NULL
+             WHERE pv.version_rank = 1
+             GROUP BY pv.process_id""",
+            id_binds,
+        )
+        for process_id, total, unresolved in cursor.fetchall():
+            participant_counts[int(process_id)] = {
+                "total": int(total),
+                "unresolved": int(unresolved or 0),
+            }
+
+        assigned_names: dict[int, list[str]] = defaultdict(list)
+        cursor.execute(
+            participant_version_cte + """
+            , confirmed_participants AS (
+                SELECT DISTINCT pv.process_id, p.id AS participant_id, p.name AS participant_name
+                  FROM participant_versions pv
+                  JOIN transcript_participants tp
+                    ON tp.transcript_version_id = pv.id
+                   AND tp.end_date IS NULL
+                   AND tp.mapping_status = 'CONFIRMED'
+                  JOIN participants p
+                    ON p.id = tp.participant_id
+                   AND p.end_date IS NULL
+                 WHERE pv.version_rank = 1
+            )
+            SELECT process_id, participant_id, participant_name
+              FROM confirmed_participants
+             ORDER BY process_id,
+                      NLSSORT(participant_name, 'NLS_SORT=ESTONIAN'),
+                      participant_id""",
+            id_binds,
+        )
+        for process_id, _participant_id, participant_name in cursor.fetchall():
+            assigned_names[int(process_id)].append(str(participant_name))
+
+        result = []
+        for row in rows:
+            process_id = int(row[0])
+            summary = _job_summary(row)
+            summary["review"] = review_counts.get(process_id, {"total": 0, "pending": 0})
+            summary["participants"] = {
+                **participant_counts.get(process_id, {"total": 0, "unresolved": 0}),
+                "assigned_names": assigned_names.get(process_id, []),
+            }
+            result.append(summary)
+        return result
 
 
 @router.get("/queue-status")
@@ -124,6 +323,83 @@ def get_queue_status() -> dict[str, int]:
         running = int(cursor.fetchone()[0])
     maximum = max(1, int(os.getenv("ERR2TEXT_MAX_CONCURRENT_DIARIZATIONS", "1")))
     return {"running_diarizations": running, "max_concurrent_diarizations": maximum}
+
+
+@router.get("/participants")
+def search_participants(query: str = Query(default="", max_length=200), limit: int = Query(default=50, ge=1, le=100)) -> list[dict[str, object]]:
+    with connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """SELECT id, name, description, organisation, occupation
+                 FROM participants
+                WHERE end_date IS NULL
+                  AND (:query IS NULL OR LOWER(name) LIKE '%' || LOWER(:query) || '%')
+                ORDER BY name, id
+                FETCH FIRST :limit ROWS ONLY""",
+            {"query": query.strip() or None, "limit": limit},
+        )
+        return [
+            {
+                "id": row[0],
+                "name": row[1],
+                "description": row[2],
+                "organisation": row[3],
+                "occupation": row[4],
+            }
+            for row in cursor.fetchall()
+        ]
+
+
+@router.post("/participants", status_code=201)
+def create_participant(request: ParticipantCreateRequest) -> dict[str, object]:
+    name = request.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Participant name is required")
+    with connection() as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """SELECT id, name, description, organisation, occupation
+                     FROM participants
+                    WHERE end_date IS NULL AND LOWER(name) = LOWER(:name)
+                    ORDER BY id
+                    FETCH FIRST 1 ROW ONLY""",
+                {"name": name},
+            )
+            existing = cursor.fetchone()
+            if existing is not None:
+                return {
+                    "id": existing[0],
+                    "name": existing[1],
+                    "description": existing[2],
+                    "organisation": existing[3],
+                    "occupation": existing[4],
+                }
+            participant_var = cursor.var(int)
+            cursor.execute(
+                """INSERT INTO participants (name, description, organisation, occupation)
+                   VALUES (:name, :description, :organisation, :occupation)
+                   RETURNING id INTO :participant_id""",
+                {
+                    "name": name,
+                    "description": request.description,
+                    "organisation": request.organisation,
+                    "occupation": request.occupation,
+                    "participant_id": participant_var,
+                },
+            )
+            participant_id = int(participant_var.getvalue()[0])
+            conn.commit()
+            return {
+                "id": participant_id,
+                "name": name,
+                "description": request.description,
+                "organisation": request.organisation,
+                "occupation": request.occupation,
+            }
+        except Exception:
+            conn.rollback()
+            raise
 
 
 @router.get("/jobs/{job_id}")
@@ -192,6 +468,21 @@ def get_job_artifacts(job_id: int) -> list[dict[str, object]]:
         cursor = conn.cursor()
         _require_process(cursor, job_id)
         cursor.execute(
+            """SELECT tv.id
+                 FROM transcript_versions tv
+                WHERE tv.process_id = :process_id
+                  AND tv.version_type = 'REVIEWED_DRAFT'
+                  AND tv.end_date IS NULL
+                ORDER BY tv.version_number DESC
+                FETCH FIRST 1 ROW ONLY""",
+            {"process_id": job_id},
+        )
+        reviewed = cursor.fetchone()
+    if reviewed is not None:
+        _regenerate_reviewed_artifacts(job_id, int(reviewed[0]))
+    with connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
             """SELECT DISTINCT a.id, a.artifact_type, a.path, a.content_type, a.size_byte, a.sha256
                  FROM processes p
                  JOIN transcript_versions tv ON tv.process_id = p.id OR tv.process_id = p.parent_process_id
@@ -203,6 +494,1304 @@ def get_job_artifacts(job_id: int) -> list[dict[str, object]]:
             {"process_id": job_id},
         )
         return [_artifact(row) for row in cursor.fetchall()]
+
+
+@router.get("/jobs/{job_id}/review")
+def get_review(job_id: int) -> dict[str, object]:
+    """Return the current reviewed transcript and its candidate context."""
+    with connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """SELECT p.id, p.status, p.media_item_id, src.url, src.title,
+                      m.canonical_url, m.media_type, m.duration_second
+                 FROM processes p
+                 JOIN sources src ON src.id = p.source_id
+                 JOIN media_items m ON m.id = p.media_item_id
+                WHERE p.id = :process_id AND p.end_date IS NULL
+                  AND src.end_date IS NULL AND m.end_date IS NULL""",
+            {"process_id": job_id},
+        )
+        process = cursor.fetchone()
+        if process is None:
+            raise HTTPException(status_code=404, detail="Process not found")
+        cursor.execute(
+            """SELECT id, version_type, version_number, status
+                 FROM transcript_versions
+                WHERE process_id = :process_id AND end_date IS NULL
+                ORDER BY CASE version_type WHEN 'REVIEWED_DRAFT' THEN 0 WHEN 'AUTOMATIC_DRAFT' THEN 1 ELSE 2 END,
+                         version_number DESC""",
+            {"process_id": job_id},
+        )
+        versions = cursor.fetchall()
+        if not versions:
+            raise HTTPException(status_code=409, detail="No transcript version available")
+        version = versions[0]
+        version_id = int(version[0])
+        cursor.execute(
+            """SELECT id, source_segment_id, segment_number, start_second, end_second, text, segment_type
+                 FROM transcript_segments
+                WHERE transcript_version_id = :version_id AND end_date IS NULL
+                ORDER BY segment_number, id""",
+            {"version_id": version_id},
+        )
+        segment_rows = cursor.fetchall()
+        segments = [
+            {
+                "id": int(row[0]),
+                "source_segment_id": int(row[1]) if row[1] is not None else None,
+                "segment_number": int(row[2]),
+                "start_second": float(row[3]),
+                "end_second": float(row[4]),
+                "text": row[5],
+                "segment_type": row[6],
+                "speakers": [],
+            }
+            for row in segment_rows
+        ]
+        segment_by_id = {item["id"]: item for item in segments}
+        segments_by_source: dict[int, list[dict[str, object]]] = {}
+        for item in segments:
+            if item["source_segment_id"] is not None:
+                segments_by_source.setdefault(int(item["source_segment_id"]), []).append(item)
+        cursor.execute(
+            """SELECT ss.transcript_segment_id, tp.id, tp.speaker_label, tp.participant_id,
+                      p.name, ss.start_second, ss.end_second, ss.confidence
+                 FROM transcript_segment_speakers ss
+                 JOIN transcript_participants tp ON tp.id = ss.transcript_participant_id
+                 LEFT JOIN participants p ON p.id = tp.participant_id
+                WHERE tp.transcript_version_id = :version_id
+                  AND ss.end_date IS NULL AND tp.end_date IS NULL
+                ORDER BY ss.transcript_segment_id, ss.start_second, ss.id""",
+            {"version_id": version_id},
+        )
+        for row in cursor.fetchall():
+            segment = segment_by_id.get(int(row[0]))
+            if segment is not None:
+                segment["speakers"].append({
+                    "transcript_participant_id": int(row[1]),
+                    "speaker_label": row[2],
+                    "participant_id": int(row[3]) if row[3] is not None else None,
+                    "participant_name": row[4],
+                    "start_second": float(row[5]),
+                    "end_second": float(row[6]),
+                    "confidence": float(row[7]),
+                })
+        cursor.execute(
+            """SELECT sm.transcript_segment_id, sm.trigger_candidate_id,
+                      sm.relative_position, sm.change_type, sm.status
+                 FROM transcript_segment_modifications sm
+                 JOIN transcript_segments s ON s.id = sm.transcript_segment_id
+                WHERE s.transcript_version_id = :version_id
+                  AND sm.end_date IS NULL
+                ORDER BY sm.transcript_segment_id, sm.id""",
+            {"version_id": version_id},
+        )
+        modifications_by_segment: dict[int, dict[str, object]] = {}
+        for row in cursor.fetchall():
+            segment_id = int(row[0])
+            metadata = modifications_by_segment.setdefault(
+                segment_id,
+                {
+                    "status": row[4],
+                    "trigger_candidate_id": int(row[1]),
+                    "relative_position": row[2],
+                    "change_types": [],
+                },
+            )
+            metadata["change_types"].append(row[3])
+        for segment in segments:
+            if int(segment["id"]) in modifications_by_segment:
+                segment["user_modification"] = modifications_by_segment[int(segment["id"])]
+        cursor.execute(
+            """SELECT rc.id, rc.transcript_segment_id, rc.candidate_type, rc.reason,
+                      rc.status, rc.decision, rc.decision_at
+                 FROM review_candidates rc
+                 JOIN transcript_segments s ON s.id = rc.transcript_segment_id
+                WHERE s.transcript_version_id = :version_id AND rc.end_date IS NULL
+                ORDER BY s.segment_number, rc.id""",
+            {"version_id": version_id if version[1] == "AUTOMATIC_DRAFT" else int(next((item[0] for item in versions if item[1] == "AUTOMATIC_DRAFT"), version_id))},
+        )
+        candidates = []
+        for row in cursor.fetchall():
+            source_segment_id = int(row[1])
+            direct_segment = segment_by_id.get(source_segment_id)
+            if direct_segment is not None:
+                # A split child may point at the reviewed parent rather than
+                # the automatic source segment. Include that parent and all
+                # active children so both halves remain editable together.
+                parent_segment = (
+                    segment_by_id.get(int(direct_segment["source_segment_id"]))
+                    if direct_segment["source_segment_id"] is not None else None
+                )
+                reviewed_group = [parent_segment] if parent_segment is not None else []
+                reviewed_group.append(direct_segment)
+                reviewed_group.extend(
+                    item for item in segments
+                    if item["id"] != direct_segment["id"]
+                    and item["source_segment_id"] == direct_segment["id"]
+                )
+                if direct_segment["source_segment_id"] is not None:
+                    reviewed_group.extend(
+                        item for item in segments
+                        if item["id"] != direct_segment["id"]
+                        and item["source_segment_id"] == direct_segment["source_segment_id"]
+                        and item not in reviewed_group
+                    )
+            else:
+                reviewed_group = list(segments_by_source.get(source_segment_id, []))
+            reviewed_group.sort(key=lambda item: (int(item["segment_number"]), int(item["id"])))
+            segment = reviewed_group[0] if reviewed_group else None
+            if segment is None:
+                continue
+            reviewed_group_ids = {int(item["id"]) for item in reviewed_group}
+            previous_id, next_id = _logical_neighbor_ids(
+                [int(item["id"]) for item in segments], reviewed_group_ids,
+            )
+            previous_segment = segment_by_id.get(previous_id) if previous_id is not None else None
+            next_segment = segment_by_id.get(next_id) if next_id is not None else None
+            proposal = None
+            if row[2] == "SPEAKER_BOUNDARY":
+                proposal = suggest_sentence_split(
+                    str(segment.get("text") or ""),
+                    float(segment["start_second"]),
+                    float(segment["end_second"]),
+                    [{"speaker_id": item["speaker_label"], "start": item["start_second"], "end": item["end_second"]}
+                     for item in segment.get("speakers", [])],
+                )
+                if proposal:
+                    label_to_id = {
+                        str(item["speaker_label"]): str(item["transcript_participant_id"])
+                        for item in segment.get("speakers", [])
+                    }
+                    proposal["from_transcript_participant_id"] = label_to_id.get(str(proposal.get("from_speaker_id")))
+                    proposal["to_transcript_participant_id"] = label_to_id.get(str(proposal.get("to_speaker_id")))
+            candidates.append({
+                "id": int(row[0]),
+                "segment_id": segment["id"],
+                "source_segment_id": source_segment_id,
+                "candidate_type": row[2],
+                "reason": row[3],
+                "status": row[4],
+                "decision": row[5],
+                "decision_at": _utc_iso(row[6]),
+                "segment": segment,
+                "reviewed_segments": reviewed_group,
+                "previous": previous_segment,
+                "next": next_segment,
+                "proposed_boundary_second": proposal.get("boundary_second") if proposal else None,
+                "proposed_split_at": proposal.get("split_at") if proposal else None,
+                "proposed_left_speaker": proposal.get("from_transcript_participant_id") if proposal else None,
+                "proposed_right_speaker": proposal.get("to_transcript_participant_id") if proposal else None,
+            })
+        cursor.execute(
+            """SELECT asset_type, url
+                 FROM media_assets
+                WHERE media_item_id = :media_item_id AND end_date IS NULL
+                ORDER BY id""",
+            {"media_item_id": int(process[2])},
+        )
+        assets = [{"asset_type": row[0], "url": row[1]} for row in cursor.fetchall()]
+        pending = sum(1 for item in candidates if item["status"] == "PENDING")
+        return {
+            "process": {"id": int(process[0]), "status": process[1]},
+            "version": {"id": version_id, "version_type": version[1], "version_number": int(version[2]), "status": version[3]},
+            "versions": [{"id": int(row[0]), "version_type": row[1], "version_number": int(row[2]), "status": row[3]} for row in versions],
+            "media": {"url": process[5], "media_type": process[6], "duration_second": float(process[7]) if process[7] is not None else None, "assets": assets},
+            "segments": segments,
+            "candidates": candidates,
+            "progress": {"total": len(candidates), "pending": pending, "resolved": len(candidates) - pending},
+        }
+
+
+@router.put("/jobs/{job_id}/review-draft")
+def save_review_candidate(job_id: int, request: ReviewCandidateRequest) -> dict[str, object]:
+    with connection() as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """SELECT status FROM processes
+                    WHERE id = :process_id AND end_date IS NULL
+                    FOR UPDATE""",
+                {"process_id": job_id},
+            )
+            process = cursor.fetchone()
+            if process is None:
+                raise HTTPException(status_code=404, detail="Process not found")
+            if process[0] != "IN_REVIEW":
+                raise HTTPException(status_code=409, detail="Process is not in review")
+            decision = request.decision or request.status
+            is_neighbor_edit = request.target_segment_id is not None
+            is_reviewed_segment_edit = request.reviewed_segment_id is not None
+            is_neighbor_merge = is_neighbor_edit and request.merge_segment_group
+            _validate_review_target(request)
+            if is_neighbor_edit and is_reviewed_segment_edit:
+                raise HTTPException(status_code=422, detail="Choose either a neighbor or a reviewed segment")
+            if request.merge_segment_group and not is_neighbor_edit:
+                raise HTTPException(status_code=422, detail="merge_segment_group requires a neighbor target")
+            if request.merge_segment_group and request.split_at is not None:
+                raise HTTPException(status_code=422, detail="merge_segment_group cannot be combined with split_at")
+            _validate_speaker_assignment_scope(request, is_neighbor_merge)
+            if request.speaker_assignment == "PARTICIPANT" and request.left_transcript_participant_id is None:
+                raise HTTPException(status_code=422, detail="PARTICIPANT assignment requires a participant id")
+            if request.speaker_assignment == "UNKNOWN" and request.left_transcript_participant_id is not None:
+                raise HTTPException(status_code=422, detail="UNKNOWN assignment cannot include a participant id")
+            if is_neighbor_edit or request.status in {"ACCEPTED", "MODIFIED"}:
+                cursor.execute(
+                    """SELECT rc.transcript_segment_id, rc.candidate_type
+                         FROM review_candidates rc
+                         JOIN transcript_segments s ON s.id = rc.transcript_segment_id
+                         JOIN transcript_versions v ON v.id = s.transcript_version_id
+                        WHERE rc.id = :candidate_id AND rc.end_date IS NULL
+                          AND v.process_id = :process_id AND v.version_type = 'AUTOMATIC_DRAFT'
+                          AND v.end_date IS NULL""",
+                    {"candidate_id": request.candidate_id, "process_id": job_id},
+                )
+                candidate_row = cursor.fetchone()
+                if candidate_row is None:
+                    raise HTTPException(status_code=404, detail="Review candidate not found")
+                source_segment_id = int(candidate_row[0])
+                candidate_type = str(candidate_row[1])
+                cursor.execute(
+                    """SELECT s.id, s.start_second, s.end_second, s.text, s.source_segment_id,
+                              s.segment_number
+                         FROM transcript_segments s
+                         JOIN transcript_versions v ON v.id = s.transcript_version_id
+                        WHERE v.process_id = :process_id AND v.version_type = 'REVIEWED_DRAFT'
+                          AND v.end_date IS NULL AND s.end_date IS NULL
+                          AND (s.id = :source_segment_id OR s.source_segment_id = :source_segment_id)
+                        ORDER BY CASE WHEN s.id = :source_segment_id THEN 0 ELSE 1 END, s.segment_number, s.id""",
+                    {"process_id": job_id, "source_segment_id": source_segment_id},
+                )
+                reviewed_segments = cursor.fetchall()
+                if not reviewed_segments:
+                    raise HTTPException(status_code=409, detail="Reviewed segment not found")
+                segment = reviewed_segments[0]
+                segment_id, start_second, end_second, old_text, source_id, segment_number = segment
+                neighbor_target_ids: list[int] = []
+                if is_reviewed_segment_edit:
+                    segment = next((item for item in reviewed_segments if int(item[0]) == int(request.reviewed_segment_id)), None)
+                    if segment is None:
+                        raise HTTPException(status_code=422, detail="Reviewed segment is not part of this candidate")
+                    segment_id, start_second, end_second, old_text, source_id, segment_number = segment
+                    # A repeated split targets exactly this child. Other
+                    # already-created children must remain untouched.
+                    reviewed_segments = [segment]
+                if is_neighbor_edit:
+                    if request.relative_position is None:
+                        raise HTTPException(status_code=422, detail="relative_position is required for a neighbor edit")
+                    cursor.execute(
+                        """SELECT id, segment_number
+                             FROM transcript_segments
+                            WHERE transcript_version_id = (SELECT id FROM transcript_versions
+                                                             WHERE process_id = :process_id
+                                                               AND version_type = 'REVIEWED_DRAFT'
+                                                               AND end_date IS NULL)
+                              AND end_date IS NULL
+                            ORDER BY segment_number, id""",
+                        {"process_id": job_id},
+                    )
+                    ordered_segments = cursor.fetchall()
+                    group_ids = {int(row[0]) for row in reviewed_segments}
+                    previous_id, next_id = _logical_neighbor_ids(
+                        [int(row[0]) for row in ordered_segments], group_ids,
+                    )
+                    if not is_neighbor_merge:
+                        _validate_logical_neighbor_target(
+                            request.relative_position,
+                            int(request.target_segment_id),
+                            previous_id,
+                            next_id,
+                        )
+                    cursor.execute(
+                        """SELECT s.id, s.start_second, s.end_second, s.text, s.source_segment_id,
+                                  s.segment_number
+                             FROM transcript_segments s
+                             JOIN transcript_versions v ON v.id = s.transcript_version_id
+                            WHERE s.id = :segment_id AND s.end_date IS NULL
+                              AND v.process_id = :process_id AND v.version_type = 'REVIEWED_DRAFT'
+                              AND v.end_date IS NULL""",
+                        {"segment_id": int(request.target_segment_id), "process_id": job_id},
+                    )
+                    target_segment = cursor.fetchone()
+                    if target_segment is None:
+                        raise HTTPException(status_code=404, detail="Neighbor segment not found")
+                    segment = target_segment
+                    segment_id, start_second, end_second, old_text, source_id, segment_number = segment
+                    neighbor_target_ids.append(int(segment_id))
+                    cursor.execute(
+                        """SELECT s.id, s.start_second, s.end_second, s.text, s.source_segment_id,
+                                  s.segment_number
+                             FROM transcript_segments s
+                            WHERE s.transcript_version_id = (SELECT transcript_version_id FROM transcript_segments WHERE id = :segment_id)
+                              AND s.end_date IS NULL
+                              AND (s.id = :segment_id OR s.source_segment_id =
+                                   (SELECT COALESCE(source_segment_id, id) FROM transcript_segments WHERE id = :segment_id))
+                            ORDER BY s.segment_number, s.id""",
+                        {"segment_id": int(segment_id)},
+                    )
+                    reviewed_segments = cursor.fetchall()
+                    if is_neighbor_merge:
+                        if len(reviewed_segments) < 2:
+                            raise HTTPException(status_code=422, detail="Neighbor segment group has no saved split to merge")
+                        group_ids = {int(item[0]) for item in reviewed_segments}
+                        if int(request.target_segment_id) not in group_ids:
+                            raise HTTPException(status_code=422, detail="Target segment is not part of the neighbor group")
+                        target_group_edge = _logical_group_edge(
+                            request.relative_position,
+                            [int(item[0]) for item in ordered_segments],
+                            group_ids,
+                        )
+                        if target_group_edge is None:
+                            raise HTTPException(status_code=422, detail="Neighbor segment group is not contiguous")
+                        expected_edge = previous_id if request.relative_position == "PREVIOUS" else next_id
+                        if expected_edge is None or int(target_group_edge) != int(expected_edge):
+                            raise HTTPException(status_code=422, detail="Target segment group is not an immediate candidate neighbor")
+                        # Merging always keeps the first active part as the
+                        # stable segment identity. Other active parts are
+                        # closed only in the explicit merge operation.
+                        segment = reviewed_segments[0]
+                        segment_id, start_second, end_second, old_text, source_id, segment_number = segment
+                        merge_text = _merge_segment_texts(reviewed_segments)
+                    if request.left_transcript_participant_id is not None:
+                        cursor.execute(
+                            """SELECT 1
+                                 FROM transcript_participants tp
+                                 JOIN transcript_segments s ON s.transcript_version_id = tp.transcript_version_id
+                                WHERE s.id = :segment_id
+                                  AND tp.id = :participant_id
+                                  AND tp.end_date IS NULL""",
+                            {"segment_id": int(segment_id), "participant_id": int(request.left_transcript_participant_id)},
+                        )
+                        if cursor.fetchone() is None:
+                            raise HTTPException(status_code=422, detail="Speaker does not belong to the active reviewed version")
+                new_text = request.text if request.text is not None else old_text
+                if is_neighbor_merge:
+                    new_text = request.text if request.text is not None else merge_text
+                new_type = request.segment_type or "SPEECH"
+                cursor.execute(
+                    """SELECT id, transcript_participant_id, start_second, end_second, confidence
+                         FROM transcript_segment_speakers
+                        WHERE transcript_segment_id = :segment_id AND end_date IS NULL
+                        ORDER BY id""",
+                    {"segment_id": int(segment_id)},
+                )
+                old_speakers = cursor.fetchall()
+
+                if request.status == "ACCEPTED" and not is_neighbor_edit:
+                    # ACCEPTED is reserved for an unchanged system proposal.
+                    # Keep the UI contract small, but reject malformed or
+                    # fabricated acceptance requests at the API boundary.
+                    if candidate_type != "SPEAKER_BOUNDARY":
+                        raise HTTPException(status_code=422, detail="Only speaker-boundary proposals can be accepted")
+                    if request.split_at is None or request.left_transcript_participant_id is None or request.right_transcript_participant_id is None:
+                        raise HTTPException(status_code=422, detail="Accepted proposal must include both split speakers")
+                    speaker_ids = {int(row[1]) for row in old_speakers}
+                    if request.left_transcript_participant_id not in speaker_ids or request.right_transcript_participant_id not in speaker_ids:
+                        raise HTTPException(status_code=422, detail="Accepted proposal uses an unknown speaker")
+
+                def restore_or_insert_speaker(target_id: int, participant_id: int, target_start: float, target_end: float, confidence: float) -> None:
+                    """Reuse a soft-deleted relation before inserting a new one.
+
+                    The speaker uniqueness constraint intentionally ignores end_date,
+                    so soft-deleting and immediately reinserting the same relation
+                    would raise ORA-00001.
+                    """
+                    normalized_start = _normalize_second(target_start)
+                    normalized_end = _normalize_second(target_end)
+                    if normalized_end < normalized_start:
+                        return
+                    cursor.execute(
+                        """SELECT id FROM transcript_segment_speakers
+                            WHERE transcript_segment_id = :segment_id
+                              AND transcript_participant_id = :participant_id
+                              AND start_second = :start_second
+                              AND end_second = :end_second
+                            ORDER BY CASE WHEN end_date IS NULL THEN 0 ELSE 1 END, id
+                            FETCH FIRST 1 ROW ONLY""",
+                        {"segment_id": target_id, "participant_id": participant_id,
+                         "start_second": normalized_start, "end_second": normalized_end},
+                    )
+                    existing = cursor.fetchone()
+                    if existing is not None:
+                        cursor.execute(
+                            """UPDATE transcript_segment_speakers
+                                  SET end_date = NULL, confidence = :confidence,
+                                      last_updated = SYSTIMESTAMP
+                                WHERE id = :id""",
+                            {"id": int(existing[0]), "confidence": confidence},
+                        )
+                        return
+                    cursor.execute("""INSERT INTO transcript_segment_speakers
+                        (transcript_segment_id, transcript_participant_id, start_second, end_second, confidence)
+                        VALUES (:segment_id, :participant_id, :start_second, :end_second, :confidence)""",
+                        {"segment_id": target_id, "participant_id": participant_id,
+                         "start_second": normalized_start, "end_second": normalized_end, "confidence": confidence})
+
+                if request.split_at is not None:
+                    split_at = int(request.split_at)
+                    if split_at >= len(new_text):
+                        raise HTTPException(status_code=422, detail="split_at must be inside the text")
+                    left_text, right_text = new_text[:split_at].rstrip(), new_text[split_at:].lstrip()
+                    if not left_text or not right_text:
+                        raise HTTPException(status_code=422, detail="Both split parts must contain text")
+                    ratio = split_at / len(new_text)
+                    normalized_start = _normalize_second(start_second)
+                    normalized_end = _normalize_second(end_second)
+                    boundary = _normalize_second(
+                        normalized_start
+                        + (normalized_end - normalized_start) * Decimal(split_at) / Decimal(len(new_text))
+                    )
+                    cursor.execute("SELECT transcript_version_id, segment_number, source_segment_id FROM transcript_segments WHERE id = :segment_id", {"segment_id": int(segment_id)})
+                    version_number_row = cursor.fetchone()
+                    if version_number_row is None:
+                        raise HTTPException(status_code=409, detail="Split target no longer exists")
+                    existing_followup = None if is_reviewed_segment_edit else next(
+                        (item for item in reviewed_segments[1:]
+                         if _normalize_second(item[1]) == normalized_end),
+                        None,
+                    )
+                    if existing_followup is None:
+                        # Segment numbers are unique across historical rows as
+                        # well as active rows. Lock the version and allocate a
+                        # fresh range above the historical maximum so a new
+                        # split can never reuse a soft-deleted number.
+                        cursor.execute(
+                            """SELECT id
+                                 FROM transcript_versions
+                                WHERE id = :version_id AND end_date IS NULL
+                                FOR UPDATE""",
+                            {"version_id": int(version_number_row[0])},
+                        )
+                        if cursor.fetchone() is None:
+                            raise HTTPException(status_code=409, detail="Transcript version is no longer active")
+                        cursor.execute(
+                            """SELECT NVL(MAX(segment_number), 0)
+                                 FROM transcript_segments
+                                WHERE transcript_version_id = :version_id""",
+                            {"version_id": int(version_number_row[0])},
+                        )
+                        historical_max = int(cursor.fetchone()[0] or 0)
+                        cursor.execute(
+                            """SELECT id
+                                 FROM transcript_segments
+                                WHERE transcript_version_id = :version_id
+                                  AND end_date IS NULL
+                                  AND segment_number > :segment_number
+                                ORDER BY segment_number, id""",
+                            {"version_id": int(version_number_row[0]), "segment_number": int(version_number_row[1])},
+                        )
+                        active_tail_ids = [int(row[0]) for row in cursor.fetchall()]
+                        new_segment_number, tail_numbers = _allocate_split_segment_numbers(
+                            historical_max, active_tail_ids,
+                        )
+                        # Every destination is above MAX(segment_number), so
+                        # no temporary collision with active or tombstoned
+                        # rows is possible. Soft-deleted rows remain untouched.
+                        for tail_id, tail_number in tail_numbers.items():
+                            cursor.execute(
+                                """UPDATE transcript_segments
+                                      SET segment_number = :segment_number, last_updated = SYSTIMESTAMP
+                                    WHERE id = :segment_id AND end_date IS NULL""",
+                                {"segment_id": tail_id, "segment_number": tail_number},
+                            )
+                    else:
+                        cursor.execute(
+                            """UPDATE transcript_segment_speakers
+                                  SET end_date = SYSDATE, last_updated = SYSTIMESTAMP
+                                WHERE transcript_segment_id = :segment_id AND end_date IS NULL""",
+                            {"segment_id": int(existing_followup[0])},
+                        )
+                        for extra in reviewed_segments[2:]:
+                            cursor.execute(
+                                """UPDATE transcript_segment_speakers
+                                      SET end_date = SYSDATE, last_updated = SYSTIMESTAMP
+                                    WHERE transcript_segment_id = :segment_id AND end_date IS NULL""",
+                                {"segment_id": int(extra[0])},
+                            )
+                            cursor.execute(
+                                """UPDATE transcript_segments SET end_date = SYSDATE, last_updated = SYSTIMESTAMP
+                                    WHERE id = :segment_id AND end_date IS NULL""",
+                                {"segment_id": int(extra[0])},
+                            )
+                    cursor.execute(
+                        "UPDATE transcript_segments SET text = :text, end_second = :end_second, segment_type = :segment_type, last_updated = SYSTIMESTAMP WHERE id = :segment_id",
+                        {"text": left_text, "end_second": boundary, "segment_type": new_type, "segment_id": int(segment_id)},
+                    )
+                    if existing_followup is not None:
+                        new_segment_id = int(existing_followup[0])
+                        neighbor_target_ids.append(new_segment_id) if is_neighbor_edit else None
+                        cursor.execute(
+                            """UPDATE transcript_segments
+                                  SET start_second = :start_second, end_second = :end_second,
+                                      text = :text, segment_type = :segment_type, last_updated = SYSTIMESTAMP
+                                WHERE id = :segment_id""",
+                            {"start_second": boundary, "end_second": end_second, "text": right_text,
+                             "segment_type": new_type, "segment_id": new_segment_id},
+                        )
+                    else:
+                        new_segment_var = cursor.var(int)
+                        cursor.execute(
+                            """INSERT INTO transcript_segments
+                               (transcript_version_id, segment_number, start_second, end_second, text, segment_type, source_segment_id)
+                               VALUES (:version_id, :segment_number, :start_second, :end_second, :text, :segment_type, :source_segment_id)
+                               RETURNING id INTO :new_id""",
+                            {"version_id": int(version_number_row[0]), "segment_number": new_segment_number,
+                             "start_second": boundary, "end_second": end_second, "text": right_text,
+                             "segment_type": new_type, "source_segment_id": int(version_number_row[2] or segment_id), "new_id": new_segment_var},
+                        )
+                        new_segment_id = int(new_segment_var.getvalue()[0])
+                        neighbor_target_ids.append(new_segment_id) if is_neighbor_edit else None
+                    # Build the target relations first and deduplicate them
+                    # before inserting. Several short diarization intervals
+                    # can collapse to the same clipped relation at a split
+                    # boundary, while the database key permits that relation
+                    # only once.
+                    pending_relations: dict[tuple[int, int, Decimal, Decimal], tuple[int, int, Decimal, Decimal, float]] = {}
+                    for row in old_speakers:
+                        cursor.execute("UPDATE transcript_segment_speakers SET end_date = SYSDATE, last_updated = SYSTIMESTAMP WHERE id = :id AND end_date IS NULL", {"id": int(row[0])})
+                        left_pid = request.left_transcript_participant_id or int(row[1])
+                        right_pid = request.right_transcript_participant_id or int(row[1])
+                        speaker_start = _normalize_second(row[2])
+                        speaker_end = _normalize_second(row[3])
+                        for target_id, target_start, target_end, participant_id in (
+                            (int(segment_id), speaker_start, min(speaker_end, boundary), left_pid),
+                            (new_segment_id, max(speaker_start, boundary), speaker_end, right_pid),
+                        ):
+                            if target_end >= target_start:
+                                relation = (int(target_id), int(participant_id), target_start, target_end, float(row[4]))
+                                key = (relation[0], relation[1], relation[2], relation[3])
+                                pending_relations[key] = relation
+                    for target_id, participant_id, target_start, target_end, confidence in pending_relations.values():
+                        restore_or_insert_speaker(target_id, participant_id, target_start, target_end, confidence)
+                elif is_neighbor_merge:
+                    # Only an explicit merge may close the other active parts
+                    # of a previously saved neighbor split.
+                    merge_start = min(_normalize_second(item[1]) for item in reviewed_segments)
+                    merge_end = max(_normalize_second(item[2]) for item in reviewed_segments)
+                    first_participant_ids = {int(row[1]) for row in old_speakers}
+                    merge_participant_id = None
+                    if request.speaker_assignment == "PARTICIPANT":
+                        merge_participant_id = int(request.left_transcript_participant_id)
+                    elif request.speaker_assignment is None:
+                        merge_participant_id = next(iter(first_participant_ids), None) if len(first_participant_ids) == 1 else None
+                    if merge_participant_id is None and request.speaker_assignment is None and source_id is not None:
+                        cursor.execute(
+                            """SELECT reviewed_tp.id,
+                                      SUM(ss.end_second - ss.start_second) AS speaking_time
+                                 FROM transcript_segment_speakers ss
+                                 JOIN transcript_segments s ON s.id = ss.transcript_segment_id
+                                 JOIN transcript_versions v ON v.id = s.transcript_version_id
+                                 JOIN transcript_participants automatic_tp
+                                   ON automatic_tp.id = ss.transcript_participant_id
+                                 JOIN transcript_participants reviewed_tp
+                                   ON reviewed_tp.speaker_label = automatic_tp.speaker_label
+                                  AND reviewed_tp.transcript_version_id = (
+                                      SELECT transcript_version_id FROM transcript_segments WHERE id = :reviewed_segment_id
+                                  )
+                                  AND reviewed_tp.end_date IS NULL
+                                WHERE s.id = :source_segment_id
+                                  AND v.version_type = 'AUTOMATIC_DRAFT'
+                                  AND v.end_date IS NULL AND ss.end_date IS NULL
+                                GROUP BY reviewed_tp.id
+                                ORDER BY speaking_time DESC, reviewed_tp.id
+                                FETCH FIRST 1 ROW ONLY""",
+                            {"source_segment_id": int(source_id), "reviewed_segment_id": int(segment_id)},
+                        )
+                        dominant = cursor.fetchone()
+                        merge_participant_id = int(dominant[0]) if dominant is not None else None
+                    if merge_participant_id is None and request.speaker_assignment in {None, "UNKNOWN"}:
+                        cursor.execute(
+                            """SELECT id
+                                 FROM transcript_participants
+                                WHERE transcript_version_id = (
+                                    SELECT transcript_version_id FROM transcript_segments WHERE id = :segment_id
+                                )
+                                  AND end_date IS NULL
+                                  AND mapping_status = 'UNKNOWN'
+                                ORDER BY id
+                                FETCH FIRST 1 ROW ONLY""",
+                            {"segment_id": int(segment_id)},
+                        )
+                        unknown_participant = cursor.fetchone()
+                        merge_participant_id = int(unknown_participant[0]) if unknown_participant is not None else None
+                        if request.speaker_assignment == "UNKNOWN" and merge_participant_id is None:
+                            raise HTTPException(
+                                status_code=422,
+                                detail="Reviewed version has no UNKNOWN speaker mapping",
+                            )
+
+                    # A merged result is one active segment.  Close historical
+                    # SPLIT metadata without inventing a new database enum.
+                    for part in reviewed_segments:
+                        cursor.execute(
+                            """UPDATE transcript_segment_modifications
+                                  SET end_date = SYSDATE, last_updated = SYSTIMESTAMP
+                                WHERE transcript_segment_id = :segment_id
+                                  AND end_date IS NULL
+                                  AND change_type = 'SPLIT'""",
+                            {"segment_id": int(part[0])},
+                        )
+
+                    for extra in reviewed_segments[1:]:
+                        cursor.execute(
+                            """UPDATE transcript_segment_speakers
+                                  SET end_date = SYSDATE, last_updated = SYSTIMESTAMP
+                                WHERE transcript_segment_id = :segment_id AND end_date IS NULL""",
+                            {"segment_id": int(extra[0])},
+                        )
+                        cursor.execute(
+                            """UPDATE transcript_segment_modifications
+                                  SET end_date = SYSDATE, last_updated = SYSTIMESTAMP
+                                WHERE transcript_segment_id = :segment_id AND end_date IS NULL""",
+                            {"segment_id": int(extra[0])},
+                        )
+                        cursor.execute(
+                            """UPDATE transcript_segments
+                                  SET end_date = SYSDATE, last_updated = SYSTIMESTAMP
+                                WHERE id = :segment_id AND end_date IS NULL""",
+                            {"segment_id": int(extra[0])},
+                        )
+                    cursor.execute(
+                        """UPDATE transcript_segment_speakers
+                              SET end_date = SYSDATE, last_updated = SYSTIMESTAMP
+                            WHERE transcript_segment_id = :segment_id AND end_date IS NULL""",
+                        {"segment_id": int(segment_id)},
+                    )
+                    cursor.execute(
+                        """UPDATE transcript_segments
+                              SET start_second = :start_second, end_second = :end_second,
+                                  text = :text, segment_type = :segment_type, last_updated = SYSTIMESTAMP
+                            WHERE id = :segment_id AND end_date IS NULL""",
+                        {"start_second": merge_start, "end_second": merge_end,
+                         "text": new_text, "segment_type": new_type, "segment_id": int(segment_id)},
+                    )
+                    if new_type != "SYSTEM_NOTICE" and merge_participant_id is not None:
+                        restore_or_insert_speaker(int(segment_id), merge_participant_id, merge_start, merge_end, 1.0)
+                    neighbor_target_ids = [int(segment_id)]
+                else:
+                    # A normal neighbor edit changes only the selected target.
+                    # It must not implicitly merge or close saved sibling parts.
+                    cursor.execute(
+                        "UPDATE transcript_segments SET text = :text, segment_type = :segment_type, last_updated = SYSTIMESTAMP WHERE id = :segment_id",
+                        {"text": new_text, "segment_type": new_type, "segment_id": int(segment_id)},
+                    )
+                    if new_type == "SYSTEM_NOTICE":
+                        cursor.execute("UPDATE transcript_segment_speakers SET end_date = SYSDATE, last_updated = SYSTIMESTAMP WHERE transcript_segment_id = :segment_id AND end_date IS NULL", {"segment_id": int(segment_id)})
+                    elif request.left_transcript_participant_id is not None:
+                        cursor.execute("UPDATE transcript_segment_speakers SET end_date = SYSDATE, last_updated = SYSTIMESTAMP WHERE transcript_segment_id = :segment_id AND end_date IS NULL", {"segment_id": int(segment_id)})
+                        restore_or_insert_speaker(int(segment_id), int(request.left_transcript_participant_id), _normalize_second(start_second), _normalize_second(end_second), 1.0)
+            if is_neighbor_edit:
+                if request.segment_type == "SYSTEM_NOTICE":
+                    change_types = ["SYSTEM_NOTICE"]
+                else:
+                    change_types = []
+                old_participant_ids = {int(row[1]) for row in old_speakers}
+                if request.split_at is not None:
+                    change_types.append("SPLIT")
+
+                # Compare text after whitespace normalization.  A split of a
+                # cue that only replaces a line break with the split boundary
+                # must not be recorded as TEXT_EDIT.
+                if request.split_at is None:
+                    text_changed_by_target = {
+                        int(segment_id): (
+                            _merge_text_changed(new_text, merge_text)
+                            if is_neighbor_merge
+                            else _normalize_review_text(new_text) != _normalize_review_text(old_text)
+                        )
+                    }
+                else:
+                    text_changed_by_target = {
+                        int(segment_id): _normalize_review_text(left_text) != _normalize_review_text(old_text[:split_at]),
+                        int(new_segment_id): _normalize_review_text(right_text) != _normalize_review_text(old_text[split_at:]),
+                    }
+
+                # Speaker changes are evaluated per resulting segment.  The
+                # previous implementation compared both requested speakers
+                # with the whole source cue and therefore marked every split
+                # child as reassigned when only the first child changed.
+                if request.split_at is None:
+                    old_ids_by_target = {int(segment_id): old_participant_ids}
+                    if is_neighbor_merge:
+                        requested_ids_by_target = {
+                            int(segment_id): (
+                                {int(merge_participant_id)}
+                                if merge_participant_id is not None and new_type != "SYSTEM_NOTICE"
+                                else set()
+                            )
+                        }
+                    else:
+                        requested_ids_by_target = {
+                            int(segment_id): ({int(request.left_transcript_participant_id)}
+                                              if request.left_transcript_participant_id is not None
+                                              else old_participant_ids)
+                        }
+                else:
+                    boundary_decimal = _normalize_second(boundary)
+                    old_ids_by_target = {
+                        int(segment_id): {int(row[1]) for row in old_speakers
+                                          if _normalize_second(row[2]) < boundary_decimal},
+                        int(new_segment_id): {int(row[1]) for row in old_speakers
+                                               if _normalize_second(row[3]) > boundary_decimal},
+                    }
+                    requested_ids_by_target = {
+                        int(segment_id): ({int(request.left_transcript_participant_id)}
+                                          if request.left_transcript_participant_id is not None
+                                          else old_ids_by_target[int(segment_id)]),
+                        int(new_segment_id): ({int(request.right_transcript_participant_id)}
+                                              if request.right_transcript_participant_id is not None
+                                              else old_ids_by_target[int(new_segment_id)]),
+                    }
+
+                target_ids = dict.fromkeys(neighbor_target_ids or [int(segment_id)])
+                any_change = bool(is_neighbor_merge)
+                for target_id in target_ids:
+                    target_change_types = list(change_types)
+                    if text_changed_by_target.get(target_id, False):
+                        target_change_types.append("TEXT_EDIT")
+                    if requested_ids_by_target.get(target_id, set()) != old_ids_by_target.get(target_id, set()):
+                        target_change_types.append("SPEAKER_REASSIGNMENT")
+                    if target_change_types:
+                        any_change = True
+                    for change_type in target_change_types:
+                        cursor.execute(
+                            """MERGE INTO transcript_segment_modifications m
+                               USING (SELECT :segment_id segment_id, :candidate_id candidate_id,
+                                             :relative_position relative_position, :change_type change_type FROM dual) x
+                                  ON (m.transcript_segment_id = x.segment_id
+                                  AND m.trigger_candidate_id = x.candidate_id
+                                  AND m.relative_position = x.relative_position
+                                  AND m.change_type = x.change_type)
+                             WHEN MATCHED THEN UPDATE SET m.end_date = NULL,
+                                  m.status = 'USER_MODIFIED', m.last_updated = SYSTIMESTAMP
+                             WHEN NOT MATCHED THEN INSERT
+                                  (transcript_segment_id, trigger_candidate_id, relative_position, change_type, status)
+                                  VALUES (x.segment_id, x.candidate_id, x.relative_position, x.change_type, 'USER_MODIFIED')""",
+                            {"segment_id": target_id, "candidate_id": request.candidate_id,
+                             "relative_position": request.relative_position, "change_type": change_type},
+                        )
+                if not any_change:
+                    raise HTTPException(status_code=422, detail="No neighbor change was submitted")
+            if not is_neighbor_edit:
+                cursor.execute(
+                """UPDATE review_candidates rc
+                      SET status = :status, decision = :decision,
+                          decision_at = SYSTIMESTAMP, last_updated = SYSTIMESTAMP
+                    WHERE rc.id = :candidate_id AND rc.end_date IS NULL
+                      AND EXISTS (
+                          SELECT 1 FROM transcript_segments s
+                          JOIN transcript_versions v ON v.id = s.transcript_version_id
+                           WHERE s.id = rc.transcript_segment_id
+                             AND v.process_id = :process_id
+                             AND v.version_type = 'AUTOMATIC_DRAFT'
+                             AND v.end_date IS NULL
+                      )""",
+                    {"status": request.status, "decision": decision, "candidate_id": request.candidate_id, "process_id": job_id},
+                )
+                if cursor.rowcount != 1:
+                    raise HTTPException(status_code=404, detail="Review candidate not found")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    regenerated = _regenerate_reviewed_artifacts(job_id)
+    return {"candidate_id": request.candidate_id, "status": request.status, "decision": decision,
+            "artifacts_regenerated": regenerated}
+
+
+@router.api_route("/jobs/{job_id}/participant-review", methods=["GET", "PUT"])
+async def get_participant_review(request: Request, job_id: int) -> dict[str, object]:
+    """Return the automatic draft and evidence needed to assign speakers."""
+    if request.method == "PUT":
+        payload = await request.json()
+        return save_participant_review(job_id, ParticipantReviewRequest.model_validate(payload))
+
+    with connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """SELECT p.status, p.media_item_id, m.title, m.media_type, m.canonical_url,
+                      v.id, v.version_number
+                 FROM processes p
+                 JOIN media_items m ON m.id = p.media_item_id
+                 JOIN transcript_versions v ON v.process_id = p.id
+                WHERE p.id = :process_id AND p.end_date IS NULL
+                  AND m.end_date IS NULL AND v.end_date IS NULL
+                  AND v.version_type = 'AUTOMATIC_DRAFT'
+                ORDER BY v.version_number DESC
+                FETCH FIRST 1 ROW ONLY""",
+            {"process_id": job_id},
+        )
+        version = cursor.fetchone()
+        if version is None:
+            raise HTTPException(status_code=409, detail="Automatic draft is not available")
+
+        cursor.execute(
+            """SELECT id
+                 FROM transcript_versions
+                WHERE process_id = :process_id
+                  AND version_type = 'REVIEWED_DRAFT'
+                  AND end_date IS NULL
+                ORDER BY version_number DESC
+                FETCH FIRST 1 ROW ONLY""",
+            {"process_id": job_id},
+        )
+        reviewed = cursor.fetchone()
+        mapping_version_id = int(reviewed[0]) if reviewed else int(version[5])
+        cursor.execute(
+            """SELECT tp.id, tp.speaker_label, tp.participant_id, tp.role,
+                      tp.mapping_status, p.name
+                 FROM transcript_participants tp
+                 LEFT JOIN participants p
+                   ON p.id = tp.participant_id AND p.end_date IS NULL
+                WHERE tp.transcript_version_id = :version_id
+                  AND tp.end_date IS NULL
+                ORDER BY tp.speaker_label""",
+            {"version_id": mapping_version_id},
+        )
+        participants = cursor.fetchall()
+
+        # A segment is usable as a speaker sample only when one distinct
+        # automatic-draft speaker is linked to it.  SYSTEM_NOTICE rows are
+        # excluded in SQL, rather than hidden later in the UI.
+        cursor.execute(
+            """SELECT tp.speaker_label, s.id, s.segment_number,
+                      s.start_second, s.end_second, s.text,
+                      MAX(ss.confidence) AS confidence
+                 FROM transcript_segments s
+                 JOIN transcript_segment_speakers ss
+                   ON ss.transcript_segment_id = s.id
+                 JOIN transcript_participants tp
+                   ON tp.id = ss.transcript_participant_id
+                WHERE s.transcript_version_id = :version_id
+                  AND s.segment_type = 'SPEECH'
+                  AND s.end_date IS NULL
+                  AND ss.end_date IS NULL
+                  AND tp.end_date IS NULL
+                GROUP BY tp.speaker_label, s.id, s.segment_number,
+                         s.start_second, s.end_second, s.text
+               HAVING COUNT(DISTINCT ss.transcript_participant_id) = 1""",
+            {"version_id": version[5]},
+        )
+        sample_rows = [
+            {
+                "speaker_label": row[0],
+                "segment_id": row[1],
+                "segment_number": row[2],
+                "start_second": float(row[3]),
+                "end_second": float(row[4]),
+                "text": row[5],
+                "confidence": float(row[6]) if row[6] is not None else None,
+            }
+            for row in cursor.fetchall()
+        ]
+        samples = select_speaker_samples(sample_rows)
+        sample_by_label = defaultdict(list)
+        for label, entries in samples.items():
+            sample_by_label[label].extend(entries)
+
+        return {
+            "process_id": job_id,
+            "status": version[0],
+            "transcript_version_id": version[5],
+            "mapping_version_id": mapping_version_id,
+            "media": {
+                "title": version[2],
+                "media_type": version[3],
+                "url": version[4],
+            },
+            "speakers": [
+                {
+                    "transcript_participant_id": row[0],
+                    "speaker_label": row[1],
+                    "participant_id": row[2],
+                    "role": row[3],
+                    "mapping_status": row[4],
+                    "participant_name": row[5],
+                    "samples": sample_by_label[row[1]],
+                }
+                for row in participants
+            ],
+        }
+
+
+def save_participant_review(job_id: int, request: ParticipantReviewRequest) -> dict[str, object]:
+    labels_in_request = [mapping.speaker_label for mapping in request.mappings]
+    if len(labels_in_request) != len(set(labels_in_request)):
+        raise HTTPException(status_code=422, detail="Each speaker label may occur only once")
+    mappings = {mapping.speaker_label: mapping for mapping in request.mappings}
+    with connection() as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """SELECT status
+                     FROM processes
+                    WHERE id = :process_id AND end_date IS NULL
+                    FOR UPDATE""",
+                {"process_id": job_id},
+            )
+            process = cursor.fetchone()
+            if process is None:
+                raise HTTPException(status_code=404, detail="Process not found")
+            if process[0] != "WAITING_FOR_PARTICIPANTS":
+                raise HTTPException(status_code=409, detail="Process is not waiting for participants")
+            cursor.execute(
+                """SELECT p.status, a.id, v.id, v.version_type
+                     FROM processes p
+                     JOIN activities a ON a.process_id = p.id
+                     JOIN transcript_versions v ON v.process_id = p.id
+                    WHERE p.id = :process_id AND p.end_date IS NULL
+                      AND a.finished_at IS NULL AND a.activity_type = 'WAITING_FOR_PARTICIPANTS'
+                      AND a.end_date IS NULL AND v.version_type = 'AUTOMATIC_DRAFT'
+                      AND v.end_date IS NULL
+                    ORDER BY v.version_number DESC
+                    FETCH FIRST 1 ROW ONLY""",
+                {"process_id": job_id},
+            )
+            active = cursor.fetchone()
+            if active is None:
+                raise HTTPException(status_code=409, detail="Process is not waiting for participants")
+            process_status, waiting_activity_id, automatic_version_id, _ = active
+
+            cursor.execute(
+                """SELECT id, speaker_label, participant_id, role, mapping_status
+                     FROM transcript_participants
+                    WHERE transcript_version_id = :version_id AND end_date IS NULL
+                    ORDER BY speaker_label""",
+                {"version_id": automatic_version_id},
+            )
+            automatic_participants = cursor.fetchall()
+            labels = {row[1] for row in automatic_participants}
+            unknown_labels = set(mappings) - labels
+            if unknown_labels:
+                raise HTTPException(status_code=422, detail={"message": "Unknown speaker label", "labels": sorted(unknown_labels)})
+            for mapping in mappings.values():
+                status = mapping.mapping_status
+                if status == "CONFIRMED" and mapping.participant_id is None:
+                    raise HTTPException(status_code=422, detail=f"{mapping.speaker_label} requires participant_id")
+                if status != "CONFIRMED" and mapping.participant_id is not None:
+                    raise HTTPException(status_code=422, detail=f"{mapping.speaker_label} cannot have participant_id for {status}")
+                if mapping.role is not None and len(mapping.role) > 120:
+                    raise HTTPException(status_code=422, detail=f"{mapping.speaker_label} role is too long")
+            for mapping in mappings.values():
+                if mapping.participant_id is not None:
+                    cursor.execute("SELECT 1 FROM participants WHERE id = :id AND end_date IS NULL", {"id": mapping.participant_id})
+                    if cursor.fetchone() is None:
+                        raise HTTPException(status_code=422, detail=f"Participant not found: {mapping.participant_id}")
+
+            cursor.execute(
+                """SELECT id, version_number
+                     FROM transcript_versions
+                    WHERE process_id = :process_id AND version_type = 'REVIEWED_DRAFT'
+                      AND end_date IS NULL
+                    ORDER BY version_number DESC
+                    FETCH FIRST 1 ROW ONLY""",
+                {"process_id": job_id},
+            )
+            reviewed = cursor.fetchone()
+            if reviewed is None:
+                cursor.execute("SELECT NVL(MAX(version_number), 0) + 1 FROM transcript_versions WHERE process_id = :process_id", {"process_id": job_id})
+                next_version = int(cursor.fetchone()[0])
+                version_var = cursor.var(int)
+                cursor.execute(
+                    """INSERT INTO transcript_versions
+                       (process_id, activity_id, version_number, version_type, status)
+                       VALUES (:process_id, :activity_id, :version_number, 'REVIEWED_DRAFT', 'DRAFT')
+                       RETURNING id INTO :version_id""",
+                    {
+                        "process_id": job_id,
+                        "activity_id": waiting_activity_id,
+                        "version_number": next_version,
+                        "version_id": version_var,
+                    },
+                )
+                reviewed_version_id = int(version_var.getvalue()[0])
+                cursor.execute(
+                    """SELECT id, speaker_label, participant_id, role, mapping_status
+                         FROM transcript_participants
+                        WHERE transcript_version_id = :version_id AND end_date IS NULL
+                        ORDER BY speaker_label""",
+                    {"version_id": automatic_version_id},
+                )
+                participant_id_by_old_id: dict[int, int] = {}
+                for old_id, label, participant_id, role, mapping_status in cursor.fetchall():
+                    new_participant_var = cursor.var(int)
+                    cursor.execute(
+                        """INSERT INTO transcript_participants
+                           (transcript_version_id, speaker_label, participant_id, role, mapping_status)
+                           VALUES (:version_id, :speaker_label, :participant_id, :role, :mapping_status)
+                           RETURNING id INTO :participant_id_out""",
+                        {
+                            "version_id": reviewed_version_id,
+                            "speaker_label": label,
+                            "participant_id": participant_id,
+                            "role": role,
+                            "mapping_status": mapping_status,
+                            "participant_id_out": new_participant_var,
+                        },
+                    )
+                    participant_id_by_old_id[int(old_id)] = int(new_participant_var.getvalue()[0])
+                cursor.execute(
+                    """SELECT id, segment_number, start_second, end_second, text, segment_type
+                         FROM transcript_segments
+                        WHERE transcript_version_id = :version_id AND end_date IS NULL
+                        ORDER BY segment_number, id""",
+                    {"version_id": automatic_version_id},
+                )
+                segment_id_map: dict[int, int] = {}
+                for old_segment_id, segment_number, start_second, end_second, text, segment_type in cursor.fetchall():
+                    new_segment_var = cursor.var(int)
+                    cursor.execute(
+                        """INSERT INTO transcript_segments
+                           (transcript_version_id, segment_number, start_second, end_second, text, segment_type, source_segment_id)
+                           VALUES (:version_id, :segment_number, :start_second, :end_second, :text, :segment_type, :source_segment_id)
+                           RETURNING id INTO :segment_id""",
+                        {
+                            "version_id": reviewed_version_id,
+                            "segment_number": segment_number,
+                            "start_second": start_second,
+                            "end_second": end_second,
+                            "text": text,
+                            "segment_type": segment_type,
+                            "source_segment_id": old_segment_id,
+                            "segment_id": new_segment_var,
+                        },
+                    )
+                    segment_id_map[int(old_segment_id)] = int(new_segment_var.getvalue()[0])
+                cursor.execute(
+                    """SELECT ss.transcript_segment_id, ss.transcript_participant_id,
+                              ss.start_second, ss.end_second, ss.confidence
+                         FROM transcript_segment_speakers ss
+                         JOIN transcript_segments s ON s.id = ss.transcript_segment_id
+                        WHERE s.transcript_version_id = :version_id AND ss.end_date IS NULL
+                        ORDER BY ss.id""",
+                    {"version_id": automatic_version_id},
+                )
+                for old_segment_id, old_participant_id, start_second, end_second, confidence in cursor.fetchall():
+                    cursor.execute(
+                        """INSERT INTO transcript_segment_speakers
+                           (transcript_segment_id, transcript_participant_id, start_second, end_second, confidence)
+                           VALUES (:segment_id, :participant_id, :start_second, :end_second, :confidence)""",
+                        {
+                            "segment_id": segment_id_map[int(old_segment_id)],
+                            "participant_id": participant_id_by_old_id[int(old_participant_id)],
+                            "start_second": start_second,
+                            "end_second": end_second,
+                            "confidence": confidence,
+                        },
+                    )
+            else:
+                reviewed_version_id = int(reviewed[0])
+
+            cursor.execute(
+                """SELECT id, speaker_label
+                     FROM transcript_participants
+                    WHERE transcript_version_id = :version_id AND end_date IS NULL""",
+                {"version_id": reviewed_version_id},
+            )
+            reviewed_participants = {row[1]: int(row[0]) for row in cursor.fetchall()}
+            for label, mapping in mappings.items():
+                cursor.execute(
+                    """UPDATE transcript_participants
+                          SET participant_id = :participant_id,
+                              role = :role,
+                              mapping_status = :mapping_status,
+                              last_updated = SYSTIMESTAMP
+                        WHERE id = :id AND end_date IS NULL""",
+                    {
+                        "participant_id": mapping.participant_id,
+                        "role": mapping.role,
+                        "mapping_status": mapping.mapping_status,
+                        "id": reviewed_participants[label],
+                    },
+                )
+
+            cursor.execute(
+                """SELECT speaker_label, mapping_status
+                     FROM transcript_participants
+                    WHERE transcript_version_id = :version_id AND end_date IS NULL
+                      AND mapping_status = 'UNCONFIRMED'""",
+                {"version_id": reviewed_version_id},
+            )
+            unresolved = [row[0] for row in cursor.fetchall()]
+            if request.confirm and unresolved:
+                raise HTTPException(status_code=409, detail={"message": "All speakers must be resolved before confirmation", "unresolved_labels": unresolved})
+            if request.confirm:
+                cursor.execute("SELECT COUNT(*) FROM transcript_participants WHERE transcript_version_id = :version_id AND end_date IS NULL AND mapping_status = 'CONFIRMED' AND participant_id IS NULL", {"version_id": reviewed_version_id})
+                if cursor.fetchone()[0]:
+                    raise HTTPException(status_code=409, detail="Confirmed speaker mapping requires a participant")
+                cursor.execute(
+                    """UPDATE activities
+                          SET finished_at = SYSTIMESTAMP, result = 'OK', last_updated = SYSTIMESTAMP
+                        WHERE id = :activity_id AND finished_at IS NULL""",
+                    {"activity_id": waiting_activity_id},
+                )
+                cursor.execute(
+                    """INSERT INTO activities (process_id, previous_activity_id, activity_type, started_at)
+                         VALUES (:process_id, :previous_activity_id, 'IN_REVIEW', SYSTIMESTAMP)""",
+                    {"process_id": job_id, "previous_activity_id": waiting_activity_id},
+                )
+                cursor.execute("UPDATE processes SET status = 'IN_REVIEW', last_updated = SYSTIMESTAMP WHERE id = :process_id", {"process_id": job_id})
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    regenerated = _regenerate_reviewed_artifacts(job_id, reviewed_version_id)
+    return {
+        "process_id": job_id,
+        "transcript_version_id": reviewed_version_id,
+        "status": "IN_REVIEW" if request.confirm else process_status,
+        "unresolved_labels": unresolved,
+        "confirmed": bool(request.confirm and not unresolved),
+        "artifacts_regenerated": regenerated,
+    }
+
+
+@router.post("/jobs/{job_id}/finalize")
+def finalize_job(job_id: int) -> dict[str, object]:
+    """Create the immutable FINAL version from the current reviewed draft."""
+    created_paths: list[Path] = []
+    with connection() as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """SELECT status, media_item_id FROM processes
+                    WHERE id = :process_id AND end_date IS NULL FOR UPDATE""",
+                {"process_id": job_id},
+            )
+            process = cursor.fetchone()
+            if process is None:
+                raise HTTPException(status_code=404, detail="Process not found")
+            if process[0] != "IN_REVIEW":
+                raise HTTPException(status_code=409, detail="Process must be IN_REVIEW before finalization")
+
+            cursor.execute(
+                """SELECT id, version_number FROM transcript_versions
+                    WHERE process_id = :process_id AND version_type = 'REVIEWED_DRAFT'
+                      AND end_date IS NULL ORDER BY version_number DESC
+                    FETCH FIRST 1 ROW ONLY""",
+                {"process_id": job_id},
+            )
+            reviewed = cursor.fetchone()
+            if reviewed is None:
+                raise HTTPException(status_code=409, detail="REVIEWED_DRAFT is not available")
+            reviewed_version_id = int(reviewed[0])
+
+            cursor.execute(
+                """SELECT COUNT(*) FROM review_candidates rc
+                    JOIN transcript_segments s ON s.id = rc.transcript_segment_id
+                    WHERE s.transcript_version_id = (
+                        SELECT id FROM transcript_versions
+                         WHERE process_id = :process_id AND version_type = 'AUTOMATIC_DRAFT'
+                           AND end_date IS NULL FETCH FIRST 1 ROW ONLY)
+                      AND rc.end_date IS NULL AND rc.status = 'PENDING'""",
+                {"process_id": job_id},
+            )
+            pending = int(cursor.fetchone()[0])
+            if pending:
+                raise HTTPException(status_code=409, detail={"message": "All review candidates must be resolved", "pending": pending})
+            cursor.execute(
+                """SELECT COUNT(*) FROM transcript_participants
+                    WHERE transcript_version_id = :version_id AND end_date IS NULL
+                      AND mapping_status = 'UNCONFIRMED'""",
+                {"version_id": reviewed_version_id},
+            )
+            unresolved = int(cursor.fetchone()[0])
+            if unresolved:
+                raise HTTPException(status_code=409, detail={"message": "All speakers must be confirmed or marked UNKNOWN", "unresolved": unresolved})
+
+            cursor.execute("SELECT id FROM activities WHERE process_id = :process_id AND activity_type = 'IN_REVIEW' AND finished_at IS NULL AND end_date IS NULL ORDER BY id DESC FETCH FIRST 1 ROW ONLY", {"process_id": job_id})
+            activity = cursor.fetchone()
+            if activity is None:
+                raise HTTPException(status_code=409, detail="Active IN_REVIEW activity is not available")
+            activity_id = int(activity[0])
+
+            cursor.execute("SELECT NVL(MAX(version_number), 0) + 1 FROM transcript_versions WHERE process_id = :process_id", {"process_id": job_id})
+            next_version = int(cursor.fetchone()[0])
+            version_var = cursor.var(int)
+            cursor.execute(
+                """INSERT INTO transcript_versions
+                   (process_id, activity_id, version_number, version_type, status)
+                   VALUES (:process_id, :activity_id, :version_number, 'FINAL', 'FINAL')
+                   RETURNING id INTO :version_id""",
+                {"process_id": job_id, "activity_id": activity_id, "version_number": next_version, "version_id": version_var},
+            )
+            final_version_id = int(version_var.getvalue()[0])
+
+            cursor.execute("SELECT id, speaker_label, participant_id, role, mapping_status FROM transcript_participants WHERE transcript_version_id = :version_id AND end_date IS NULL ORDER BY id", {"version_id": reviewed_version_id})
+            participant_map: dict[int, int] = {}
+            for old_id, label, participant_id, role, mapping_status in cursor.fetchall():
+                out = cursor.var(int)
+                cursor.execute(
+                    """INSERT INTO transcript_participants
+                       (transcript_version_id, speaker_label, participant_id, role, mapping_status)
+                       VALUES (:version_id, :label, :participant_id, :role, :mapping_status)
+                       RETURNING id INTO :new_id""",
+                    {"version_id": final_version_id, "label": label, "participant_id": participant_id, "role": role, "mapping_status": mapping_status, "new_id": out},
+                )
+                participant_map[int(old_id)] = int(out.getvalue()[0])
+
+            cursor.execute("SELECT id, segment_number, start_second, end_second, text, segment_type, source_segment_id FROM transcript_segments WHERE transcript_version_id = :version_id AND end_date IS NULL ORDER BY segment_number, id", {"version_id": reviewed_version_id})
+            segment_map: dict[int, int] = {}
+            for old_id, number, start, end, text_value, segment_type, source_id in cursor.fetchall():
+                out = cursor.var(int)
+                cursor.execute(
+                    """INSERT INTO transcript_segments
+                       (transcript_version_id, segment_number, start_second, end_second, text, segment_type, source_segment_id)
+                       VALUES (:version_id, :segment_number, :start_second, :end_second, :text_value, :segment_type, :source_id)
+                       RETURNING id INTO :new_id""",
+                    {"version_id": final_version_id, "segment_number": number, "start_second": start, "end_second": end, "text_value": text_value, "segment_type": segment_type, "source_id": source_id, "new_id": out},
+                )
+                segment_map[int(old_id)] = int(out.getvalue()[0])
+
+            cursor.execute("""SELECT transcript_segment_id, transcript_participant_id, start_second, end_second, confidence
+                              FROM transcript_segment_speakers WHERE transcript_segment_id IN
+                              (SELECT id FROM transcript_segments WHERE transcript_version_id = :version_id)
+                                AND end_date IS NULL ORDER BY id""", {"version_id": reviewed_version_id})
+            for old_segment_id, old_participant_id, start, end, confidence in cursor.fetchall():
+                cursor.execute("""INSERT INTO transcript_segment_speakers
+                           (transcript_segment_id, transcript_participant_id, start_second, end_second, confidence)
+                           VALUES (:segment_id, :participant_id, :start_second, :end_second, :confidence)""",
+                               {"segment_id": segment_map[int(old_segment_id)], "participant_id": participant_map[int(old_participant_id)], "start_second": start, "end_second": end, "confidence": confidence})
+
+            cursor.execute("""SELECT a.path FROM transcript_versions tv
+                              JOIN transcript_artifacts ta ON ta.transcript_version_id = tv.id
+                              JOIN artifacts a ON a.id = ta.artifact_id
+                             WHERE tv.process_id = :process_id AND tv.version_type = 'AUTOMATIC_DRAFT'
+                               AND tv.end_date IS NULL AND ta.end_date IS NULL AND a.end_date IS NULL
+                             ORDER BY a.id FETCH FIRST 1 ROW ONLY""", {"process_id": job_id})
+            source = cursor.fetchone()
+            if source is None:
+                raise HTTPException(status_code=409, detail="Automatic transcript artifact is not available")
+            source_path = Path(str(source[0])).resolve()
+            source_path.parent.mkdir(parents=True, exist_ok=True)
+            markdown_path = source_path.parent / "final.md"
+            json_path = source_path.parent / "final.json"
+            markdown, json_content = _render_transcript_version(cursor, final_version_id, "FINAL")
+            markdown_path.write_bytes(markdown)
+            json_path.write_bytes(json_content)
+            created_paths.extend((markdown_path, json_path))
+            for artifact_type, path, content_type, content in (("FINAL_MARKDOWN", markdown_path, "text/markdown", markdown), ("FINAL_JSON", json_path, "application/json", json_content)):
+                digest = sha256(content).hexdigest()
+                artifact_var = cursor.var(int)
+                cursor.execute("""INSERT INTO artifacts (artifact_type, path, content_type, size_byte, sha256)
+                                  VALUES (:artifact_type, :path, :content_type, :size_byte, :sha256)
+                                  RETURNING id INTO :artifact_id""", {"artifact_type": artifact_type, "path": str(path), "content_type": content_type, "size_byte": len(content), "sha256": digest, "artifact_id": artifact_var})
+                artifact_id = int(artifact_var.getvalue()[0])
+                cursor.execute("INSERT INTO transcript_artifacts (transcript_version_id, artifact_id) VALUES (:version_id, :artifact_id)", {"version_id": final_version_id, "artifact_id": artifact_id})
+                cursor.execute("INSERT INTO activity_artifacts (activity_id, artifact_id) VALUES (:activity_id, :artifact_id)", {"activity_id": activity_id, "artifact_id": artifact_id})
+
+            cursor.execute("UPDATE activities SET finished_at = SYSTIMESTAMP, result = 'OK', last_updated = SYSTIMESTAMP WHERE id = :activity_id AND finished_at IS NULL", {"activity_id": activity_id})
+            cursor.execute("UPDATE processes SET status = 'FINISHED', finished_at = SYSTIMESTAMP, last_updated = SYSTIMESTAMP WHERE id = :process_id AND status = 'IN_REVIEW'", {"process_id": job_id})
+            conn.commit()
+            return {"process_id": job_id, "status": "FINISHED", "transcript_version_id": final_version_id, "artifacts": [str(markdown_path), str(json_path)]}
+        except Exception:
+            conn.rollback()
+            for path in created_paths:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise
 
 
 @router.get("/jobs/{job_id}/artifacts/{artifact_id}")
@@ -231,9 +1820,9 @@ def download_job_artifact(job_id: int, artifact_id: int):
 
 def _job_summary(row) -> dict[str, object]:
     return {
-        "id": row[0], "submitted_url": row[1], "title": row[2], "status": row[3],
-        "submitted_at": _utc_iso(row[4]), "resolved_at": _utc_iso(row[5]),
-        "error_code": row[6], "error_message": row[7],
+        "id": row[0], "status": row[1], "submitted_at": _utc_iso(row[2]),
+        "submitted_url": row[3], "title": row[4],
+        "published_date": _utc_iso(row[5]), "error_message": row[6],
     }
 
 
@@ -245,6 +1834,200 @@ def _require_process(cursor, process_id: int) -> None:
 
 def _artifact(row) -> dict[str, object]:
     return {"id": row[0], "artifact_type": row[1], "path": row[2], "content_type": row[3], "size_byte": row[4], "sha256": row[5]}
+
+
+def _upsert_reviewed_artifact(cursor, version_id: int, artifact_type: str, path: Path,
+                              content_type: str, content: bytes) -> None:
+    digest = sha256(content).hexdigest()
+    cursor.execute(
+        """SELECT a.id
+             FROM transcript_artifacts ta
+             JOIN artifacts a ON a.id = ta.artifact_id
+            WHERE ta.transcript_version_id = :version_id
+              AND a.artifact_type IN ('REVIEWED_DRAFT_MD', 'REVIEWED_TRANSCRIPT_MARKDOWN', 'REVIEWED_DRAFT_JSON')
+              AND (a.artifact_type = :artifact_type OR a.artifact_type = 'REVIEWED_TRANSCRIPT_MARKDOWN')
+              AND ta.end_date IS NULL AND a.end_date IS NULL
+            FETCH FIRST 1 ROW ONLY""",
+        {"version_id": version_id, "artifact_type": artifact_type},
+    )
+    existing = cursor.fetchone()
+    if existing is None:
+        artifact_var = cursor.var(int)
+        cursor.execute(
+            """INSERT INTO artifacts (artifact_type, path, content_type, size_byte, sha256)
+               VALUES (:artifact_type, :path, :content_type, :size_byte, :sha256)
+               RETURNING id INTO :artifact_id""",
+            {"artifact_type": artifact_type, "path": str(path), "content_type": content_type,
+             "size_byte": len(content), "sha256": digest, "artifact_id": artifact_var},
+        )
+        artifact_id = int(artifact_var.getvalue()[0])
+        cursor.execute(
+            "INSERT INTO transcript_artifacts (transcript_version_id, artifact_id) VALUES (:version_id, :artifact_id)",
+            {"version_id": version_id, "artifact_id": artifact_id},
+        )
+    else:
+        cursor.execute(
+            """UPDATE artifacts
+                  SET artifact_type = :artifact_type, path = :path, content_type = :content_type,
+                      size_byte = :size_byte, sha256 = :sha256, last_updated = SYSTIMESTAMP
+                WHERE id = :artifact_id AND end_date IS NULL""",
+            {"artifact_type": artifact_type, "path": str(path), "content_type": content_type,
+             "size_byte": len(content), "sha256": digest, "artifact_id": int(existing[0])},
+        )
+
+
+def _render_transcript_version(cursor, version_id: int, version_type: str) -> tuple[bytes, bytes]:
+    cursor.execute(
+        """SELECT s.id, s.segment_number, s.start_second, s.end_second, s.text, s.segment_type,
+                  tp.speaker_label, p.name, ss.start_second, ss.end_second, ss.confidence
+             FROM transcript_segments s
+             LEFT JOIN transcript_segment_speakers ss ON ss.transcript_segment_id = s.id AND ss.end_date IS NULL
+             LEFT JOIN transcript_participants tp ON tp.id = ss.transcript_participant_id AND tp.end_date IS NULL
+             LEFT JOIN participants p ON p.id = tp.participant_id AND p.end_date IS NULL
+            WHERE s.transcript_version_id = :version_id AND s.end_date IS NULL
+            ORDER BY s.segment_number, s.id, ss.id""", {"version_id": version_id})
+    segments: list[dict[str, object]] = []
+    current = None
+    for segment_id, number, start, end, text_value, segment_type, label, name, speaker_start, speaker_end, confidence in cursor.fetchall():
+        if current is None or int(segment_id) != current["id"]:
+            current = {"id": int(segment_id), "segment_number": int(number), "start_second": float(start), "end_second": float(end), "text": text_value, "segment_type": segment_type, "speakers": []}
+            segments.append(current)
+        if label is not None:
+            current["speakers"].append({"speaker_label": label, "participant_name": name, "start_second": float(speaker_start), "end_second": float(speaker_end), "confidence": float(confidence)})
+    for segment in segments:
+        totals: dict[tuple[object, object], float] = {}
+        for speaker in segment["speakers"]:
+            key = (speaker.get("speaker_label"), speaker.get("participant_name"))
+            totals[key] = totals.get(key, 0.0) + max(0.0, float(speaker["end_second"]) - float(speaker["start_second"]))
+        dominant = max(totals.items(), key=lambda item: item[1], default=None)
+        segment["dominant_speaker"] = ({"speaker_label": dominant[0][0], "participant_name": dominant[0][1], "duration_second": dominant[1]} if dominant else None)
+    lines = ["# Transkriptsioon", ""]
+    for segment in segments:
+        timestamp = _format_transcript_time(segment["start_second"])
+        if segment["segment_type"] == "SYSTEM_NOTICE":
+            lines.append(f"*Ekraaniteade ({timestamp}): {segment['text']}*")
+        else:
+            dominant = segment.get("dominant_speaker") or {}
+            speaker = dominant.get("participant_name") or dominant.get("speaker_label")
+            lines.append(f"*{timestamp}* {f'**{speaker}** ' if speaker else ''}{segment['text']}")
+        lines.append("")
+    markdown = ("\n".join(lines).rstrip() + "\n").encode("utf-8")
+    return markdown, (json.dumps({"version_id": version_id, "version_type": version_type, "segments": segments}, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+
+
+def _regenerate_reviewed_artifacts(process_id: int, version_id: int | None = None) -> bool:
+    """Regenerate the current REVIEWED_DRAFT files after the DB commit.
+
+    The user transaction is already committed when this function runs.  A
+    failed file generation therefore cannot undo a valid mapping or decision.
+    """
+    try:
+        with connection() as conn:
+            cursor = conn.cursor()
+            if version_id is None:
+                cursor.execute(
+                    """SELECT id FROM transcript_versions
+                        WHERE process_id = :process_id AND version_type = 'REVIEWED_DRAFT'
+                          AND end_date IS NULL
+                        ORDER BY version_number DESC FETCH FIRST 1 ROW ONLY""",
+                    {"process_id": process_id},
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    return False
+                version_id = int(row[0])
+            cursor.execute(
+                """SELECT a.path
+                     FROM transcript_versions tv
+                     JOIN transcript_artifacts ta ON ta.transcript_version_id = tv.id
+                     JOIN artifacts a ON a.id = ta.artifact_id
+                    WHERE tv.process_id = :process_id AND tv.version_type = 'AUTOMATIC_DRAFT'
+                      AND a.end_date IS NULL AND tv.end_date IS NULL AND ta.end_date IS NULL
+                    ORDER BY a.id FETCH FIRST 1 ROW ONLY""",
+                {"process_id": process_id},
+            )
+            source = cursor.fetchone()
+            if source is None:
+                return False
+
+            cursor.execute(
+                """SELECT s.id, s.segment_number, s.start_second, s.end_second, s.text, s.segment_type,
+                          tp.speaker_label, p.name, ss.start_second, ss.end_second, ss.confidence
+                     FROM transcript_segments s
+                     LEFT JOIN transcript_segment_speakers ss
+                       ON ss.transcript_segment_id = s.id AND ss.end_date IS NULL
+                     LEFT JOIN transcript_participants tp
+                       ON tp.id = ss.transcript_participant_id AND tp.end_date IS NULL
+                     LEFT JOIN participants p
+                       ON p.id = tp.participant_id AND p.end_date IS NULL
+                    WHERE s.transcript_version_id = :version_id AND s.end_date IS NULL
+                    ORDER BY s.segment_number, s.id, ss.id""",
+                {"version_id": version_id},
+            )
+            rows = cursor.fetchall()
+            segments = []
+            current = None
+            for segment_id, number, start, end, text_value, segment_type, label, name, speaker_start, speaker_end, confidence in rows:
+                if current is None or int(segment_id) != current["id"]:
+                    current = {"id": int(segment_id), "segment_number": int(number),
+                               "start_second": float(start), "end_second": float(end),
+                               "text": text_value, "segment_type": segment_type, "speakers": []}
+                    segments.append(current)
+                if label is not None:
+                    current["speakers"].append({"speaker_label": label,
+                                                "participant_name": name,
+                                                "start_second": float(speaker_start),
+                                                "end_second": float(speaker_end),
+                                                "confidence": float(confidence)})
+
+            for segment in segments:
+                totals: dict[tuple[object, object], float] = {}
+                for speaker in segment["speakers"]:
+                    key = (speaker.get("speaker_label"), speaker.get("participant_name"))
+                    totals[key] = totals.get(key, 0.0) + max(
+                        0.0, float(speaker["end_second"]) - float(speaker["start_second"])
+                    )
+                dominant = max(totals.items(), key=lambda item: item[1], default=None)
+                segment["dominant_speaker"] = (
+                    {"speaker_label": dominant[0][0], "participant_name": dominant[0][1],
+                     "duration_second": dominant[1]}
+                    if dominant is not None else None
+                )
+
+            lines = ["# Transkriptsioon", ""]
+            for segment in segments:
+                timestamp = _format_transcript_time(segment["start_second"])
+                if segment["segment_type"] == "SYSTEM_NOTICE":
+                    lines.append(f"*Ekraaniteade ({timestamp}): {segment['text']}*")
+                else:
+                    dominant = segment.get("dominant_speaker") or {}
+                    speaker = dominant.get("participant_name") or dominant.get("speaker_label")
+                    prefix = f"**{speaker}** " if speaker else ""
+                    lines.append(f"*{timestamp}* {prefix}{segment['text']}")
+                lines.append("")
+            markdown = ("\n".join(lines).rstrip() + "\n").encode("utf-8")
+            payload = {"version_id": int(version_id), "version_type": "REVIEWED_DRAFT",
+                       "segments": segments}
+            json_content = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+            source_path = Path(str(source[0])).resolve()
+            source_path.parent.mkdir(parents=True, exist_ok=True)
+            markdown_path = source_path.parent / "reviewed-draft.md"
+            json_path = source_path.parent / "reviewed-draft.json"
+            markdown_path.write_bytes(markdown)
+            json_path.write_bytes(json_content)
+            _upsert_reviewed_artifact(cursor, int(version_id), "REVIEWED_DRAFT_MD",
+                                      markdown_path, "text/markdown", markdown)
+            _upsert_reviewed_artifact(cursor, int(version_id), "REVIEWED_DRAFT_JSON",
+                                      json_path, "application/json", json_content)
+            conn.commit()
+            return True
+    except Exception:
+        return False
+
+
+def _format_transcript_time(value) -> str:
+    seconds = max(0, int(float(value or 0)))
+    return f"{seconds // 3600:02d}:{(seconds % 3600) // 60:02d}:{seconds % 60:02d}"
 
 
 def _find_active_process(cursor, media_id: int) -> int | None:

@@ -22,6 +22,27 @@
 - Ära muuda kõrvalisi faile ega paranda mitteseotud probleeme.
 - Kõrge mõjuga otsuste puhul eelista juurpõhjuse parandamist, mitte lokaalseid ümberkäike.
 
+### Git ja juurutus
+
+- `git commit` vajab kasutaja iga töökorra jaoks eraldi luba.
+- `git push` vajab kasutaja iga töökorra jaoks eraldi luba.
+- Kuna rakendus töötab samas serveris, piisab testimiseks koodi muutmisest ning
+  vajaliku konteineri ehitamisest ja taaskäivitamisest; commit'i ega push'i ei
+  tohi eeldada juurutuse eeltingimusena.
+
+### Testimine ja andmete muutmine
+
+- Ilma kasutaja eraldi loata ei tohi käivitada teste ega kontrollskripte, mis
+  kirjutavad andmebaasi või muudavad olemasolevaid andmeid.
+- Ilma sellise loata on lubatud ainult dry-run'id, lugemispäringud ja muud
+  mitte-muteerivad kontrollid.
+- Mistahes andmeid või andmestruktuuri muutvat tegevust ei tohi teha ilma
+  kasutaja eelneva eraldi loata — mitte kunagi. See hõlmab nii andmeridade
+  lisamist, muutmist ja kustutamist kui ka tabeli, veeru, indeksi, piirangu või
+  sequence'i lisamist, muutmist või kustutamist ning migratsiooni rakendamist.
+- Kui kontroll eeldab andmete muutmist, tuleb enne peatuda ja küsida kasutajalt
+  eraldi luba.
+
 ## 4. Vea käsitlemise juhis
 
 - Vea või regressiooni korral uuri esmalt juurpõhjust.
@@ -59,6 +80,7 @@
 - [`README.md`](../README.md)
 - [`docs/task_to_solve.md`](task_to_solve.md)
 - [`docs/agents.md`](agents.md)
+- [`docs/evaluation_data.md`](evaluation_data.md)
 - [`docs/err2text_bpmn.drawio`](err2text_bpmn.drawio)
 - [`docs/err2text_bpmn.drawio.png`](err2text_bpmn.drawio.png)
 - [`db/erd.md`](../db/erd.md)
@@ -82,6 +104,10 @@
 - Kui muudad andmestruktuure või andmebaasipoolseid reegleid, loe `db/erd.md` ja `db/schema/001_core_schema.sql`.
 - Kui muudad URL-i lahendamist või meediaallikate salvestamist, loe `backend/app/services/resolver.py`, `backend/app/api/routes.py` ja BPMN-protsessi.
 - Kui muudad jõudlust või diarization’i käitamist, loe `docs/task_to_solve.md`, `compose.yaml` ja `backend/worker.py`.
+- Kui kasutad protsessiandmeid kvantitatiivseks analüüsiks või mudeli
+  õpetamiseks või muudad nende kasutusluba, loe enne
+  `docs/evaluation_data.md`. Kasutada tohib ainult registris vastava eesmärgi
+  juures väärtusega `Jah` märgitud protsessi või kandidaadivahemikku.
 
 ## 8. Väljundi ootused
 
