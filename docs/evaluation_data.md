@@ -1,179 +1,246 @@
 # Analüüsi- ja õppeandmete register
 
-## 1. Dokumendi eesmärk ja kasutamine
+## Eesmärk
 
-Dokumendi eesmärk on vältida vigaste või ebaselgete otsusesiltidega protsesside
-sattumist formaalsesse analüüsi ja mudeli õppeandmetesse. Register säilitab iga
-protsessi või kandidaadivahemiku kohta kasutusotsuse ning konkreetse põhjuse,
-miks andmeid tohib või ei tohi kasutada.
+Register määrab, milliseid inimese lõpetatud tehniliste kandidaatide otsuseid
+võib kasutada ICM0035 kursusetöö analüüsis ja mudelkatsetes. See ei ole
+tootmismudeli õppeandmete register.
 
-Dokument on protsessipõhine lubade register. Seda peab saama kasutada ja
-uuendada ilma vestlusajaloo või varasema projektitausta teadmiseta. See ei ole
-käituslogi ega katsetulemuste detailne aruanne.
+Kursusetöö jaoks on analüüsiks lubatud iga allolevas tabelis nimetatud
+kandidaadivahemik. Protsessi olek või `FINAL` versiooni olemasolu ei ole
+selle valiku kriteerium. Tootmismudeli õpetamine eeldaks eraldi valideeritud
+`FINAL` versiooni; käesolevas tabelis on selle veerg seetõttu kõikjal `Ei`.
 
-Formaalses analüüsis võib kasutada ka kontrollitud `IN_REVIEW` protsessi või
-selgelt piiritletud kandidaadivahemikku, kui analüüsitavad otsusesildid on
-usaldusväärsed ja vahemik on käesolevas registris lubatud.
+Analüüsiloa tingimus on, et kandidaadil on inimese lõpetatud ja omavahel
+kooskõlaline `status`, `decision` ning `decision_at`:
+`ACCEPTED`, `MODIFIED` või `REJECTED`. `PENDING` kandidaate ei kasutata.
 
-Registris eristatakse tootmismudeli andmestikku ja kursusetöö mudelkatset.
-Tootmismudeli õpetamise veerg eeldab valideeritud `FINAL` versiooni.
-Kursusetöö mudelkatse puhul `FINAL` versiooni ei nõuta: kasutada võib iga
-selgelt piiritletud kandidaadivahemikku, mille väärtus on `Analüüsiks: Jah`.
-Seega ei ole protsessi `IN_REVIEW` või `FINISHED` olek kursusetöö andmestiku
-valiku kriteerium.
+## Välistatud andmed
 
-Registri väärtused on binaarsed:
+| Protsess või vahemik | Analüüsiks | Põhjus |
+|---|---|---|
+| `#13` | Ei | Kõik 34 otsust salvestati vana UI tõttu `MODIFIED`-na; tegelikku otsuseliiki ei saa taastada. |
+| `#17` | Ei | Kõik 46 otsust salvestati vana UI tõttu `MODIFIED`-na; tegelikku otsuseliiki ei saa taastada. |
+| `#15`, kandidaadid `171–178` | Ei | Otsused salvestati enne otsuseliikide parandust `MODIFIED`-na. |
 
-- `Jah` — andmeid tohib selles veerus nimetatud eesmärgil kasutada;
-- `Ei` — andmeid ei tohi selles veerus nimetatud eesmärgil kasutada.
+2026-10-17 kasutaja kinnitatud erand: B-tunnustega ajaloolises testfailis
+`log/test_data_b.csv` säilitatakse varasema 341-realise CSV täpne koosseis,
+sealhulgas protsessi 15 kandidaadid 171–178 ja nende senised sildid.
+Erand võimaldab võrrelda sama valimi tulemusi; nende kaheksa sildi teadaolev
+ebausaldusväärsus säilib. Erand ei laiene treeningule ega uutele testvalimitele.
 
-Kui piirang puudutab ainult osa protsessist, on see osa kandidaadi-ID-dega
-eraldi real. Põhjuse veerg ütleb konkreetselt, miks väärtus on `Ei`.
+## Andmehulkade jaotus
 
-### Otsustamise reeglid
+| Andmehulk | Protsessid | Staatus ja kasutus |
+|---|---|---|
+| Treeningandmed | `31–32, 34–42, 44, 47–50, 53–55, 57–59, 61–67, 69, 71–72, 75–78, 81–82, 84–86, 88, 90, 93, 95–101` | Praegune 1 006-realine treeningandmestik |
+| Testandmestik 1 | `14–16, 18–29` | 2026-10-19 fikseeritud 488 kandidaati 15 protsessist; CSV `log/test1_data_b.csv`. Sellel hinnati 498 eelnevalt fikseeritud mudeli/tunnusevarianti. |
+| Testandmestik 2 | `33, 43, 79–80, 83, 89, 91, 94, 102–105, 107–108` | 2026-10-20 fikseeritud 337 kandidaati 14 terviksaatest; CSV `log/test2_data_b.csv`. Hinnatud eraldi GNU Octave'i katses: 498/498 varianti, 0 viga. |
+| Testandmestik 3 (võimalik) | Treeningust ja Test1–Test2-st väljas olevad `109+` protsessid | Täpne koosseis ja maht pole veel määratud. Protsessid 100 ja 101 kuuluvad praegusesse treeningusse ning 102–108 Test2-sse. |
 
-Protsessi või kandidaadivahemiku veerg märgitakse `Jah` ainult järgmiste
-reeglite alusel:
+### Fikseeritud koosseis, 2026-10-19 ja 2026-10-20
 
-- **Analüüsiks:** inimene on hinnatavad kandidaadid üle vaadanud,
-  analüüsitavad otsusesildid salvestati kehtiva otsuseloogikaga ja kasutatav
-  vahemik on kandidaadi-ID-dega üheselt piiritletud. `FINAL` versioon ei ole
-  nõutav. Kui mõne kandidaadi tegelikku otsuseliiki ei saa tõendada, on selle
-  vahemiku väärtus `Ei`.
-- **Õpetamiseks:** tootmismudeli õpetamise luba. Protsess on `FINISHED`,
-  olemas on valideeritud muutumatu `FINAL` versioon, inimene on märgendid
-  sisuliselt üle vaadanud ning teadaolev viga ei moonuta õpetamisel kasutatavat
-  sihtmärki. Teadmata päritolu või tagantjärele oletatud märgend tähendab
-  `Ei`.
-- **Kursusetöö mudelkatseks:** eraldi luba ei kajastu tabeli oma veerus.
-  Kasutada tohib iga selgelt piiritletud rida, millel on `Analüüsiks: Jah`.
-  Sisendiks on ainult inimese lõpetatud otsusega kandidaadid; `PENDING` ridu
-  ei kasutata. Tootmismudeli `FINAL` nõue sellele katsele ei laiene.
-- **Dokumentatsiooniks:** juhtumi algandmed, teadaolev piirang ja kasutusviis on
-  kirjeldatud. Vigane protsess võib olla dokumentatsiooniks `Jah`, kui seda ei
-  esitata korrektse analüüsi- või õppeandmestikuna.
+Treeningu aluseks on muutmata `log/training_data_b.csv`: 1 006 kandidaati
+51 protsessist. Täpsed kandidaadivahemikud on allolevas registris treeningu
+protsesside ridadel; uued otsused neisse automaatselt ei lisandu.
+Faili SHA-256: `4a7e4dbbbf8c760e10ae49f9cc2b0d77de96fa0ee517731053486d64328c9095`.
 
-Kui nõutav tõend puudub või info on vastuoluline, märgitakse `Ei`. Puuduvat
-otsuseliiki ei taastata segmendi kuju, ajatempli ega kasutaja oletatava tegevuse
-põhjal.
+| Andmehulk | Kandidaate | ACCEPTED | MODIFIED | REJECTED |
+|---|---:|---:|---:|---:|
+| Treening | 1 006 | 251 | 454 | 301 |
+| Test1 | 488 | 290 | 107 | 91 |
+| Test2 | 337 | 62 | 151 | 124 |
 
-### Registri uuendamine
+Test1 sisaldab protsesside 14–29 kõiki kontrolli hetkeks lõpetatud,
+kooskõlalisi ja kvaliteedipiirangutele vastavaid otsuseid. 542 lõpetatud
+otsusest on välja jäetud protsess 17 (46 kandidaati) ning protsessi 15
+kandidaadid 171–178 (8 kandidaati). Protsessist 25 kuulub komplekti
+24 ülevaadatud kandidaati; 38 ülevaatamata kandidaati jäävad välja.
+Varasem 341-realine `log/test_data_b.csv` jääb ajalooliseks failiks ega
+esinda uut Test1 koosseisu.
 
-Registrit uuendab projekti omanik või tema volitatud agent järgmises korras:
+Test1 fail: `log/test1_data_b.csv`, SHA-256
+`de55ad11a8236782ef286e2876c0ba32d1cf9a145377ea3afe0c7d1e0ff08c7e`.
+Päritolu on `docs/kursusetoo/manifestid/test1_manifest.json` failis. Kõigi fikseeritud mudelite ja
+tunnusevariantide testimisskript on `docs/kursusetoo/scripts/test_all_models.m`; käivitusjuhend
+ja mõõdikud on `docs/kursusetoo/test1_matlab.md` failis. Test käivitati MATLABis
+2026-10-19: 498/498 varianti lõpetasid, vigu oli 0. Tulemuste kokkuvõte on
+`docs/kursusetoo/tulemused.md` failis.
 
-1. Tuvasta protsessi ID, saate pealkiri ja hinnatavate kandidaatide ID-d.
-2. Analüüsiloa puhul kontrolli kandidaadi olekut, otsuseliiki ja
-   otsuseloogika versiooni. Õpetamisloa puhul kontrolli lisaks aktiivset
-   `FINAL` versiooni ning selle valideerimisartefakti ID-d ja SHA-256
-   kontrollsummat. Ära kasuta tõendina ainult veebivaates nähtavat teksti.
-3. Kontrolli, millise koodi ja UI otsuseloogikaga märgendid salvestati ning kas
-   protsessi kohta on teada andmekvaliteedi intsidente.
-4. Kui piirang puudutab ainult osa kandidaatidest, lisa sellele vahemikule
-   eraldi rida. Ära üldista ühe vahemiku luba kogu protsessile.
-5. Täida kõik kolm kasutusveergu ainult väärtustega `Jah` või `Ei`, lisa
-   valideerimisalus ja kirjuta põhjusesse kontrollitav fakt.
-6. Salvesta dokumendimuudatus tavalise Git-commit'iga. Veebirakendus seda
-   dokumenti automaatselt ei muuda.
+Sama fikseeritud Test1 katseplaan on realiseeritud ka eraldi GNU Octave'i
+katsena failis `docs/kursusetoo/scripts/test_all_models_octave.m`. See kasutab samu sisendfaile
+ja mõõdikuid, kuid on Octave'i teostuse katse; selle arvusid ei käsitleta
+MATLABi tulemuste täpse kordusena. Käivitus- ja võrdlusreeglid on
+`docs/kursusetoo/test1_octave.md` failis.
 
-`finalize` valideerib andmed enne `FINAL` versiooni ja `FINISHED` oleku
-loomist. Eduka valideerimise tõend on `FINAL` versiooniga seotud
-valideerimisartefakt ja kontrollsumma. Ebaõnnestunud valideerimise korral jääb
-protsess `IN_REVIEW` olekusse ja õpetamise väärtus on `Ei`. Analüüsiluba võib
-jääda `Jah` ainult registris nimetatud kontrollitud kandidaadivahemikule.
+Serveri Octave'i paigalduse ja `octave11` käivitaja juhend ei kuulu
+repositoriooriumi: `/home/ubuntu/.local/share/octave-runtime/octave-ubuntu-setup.md`.
 
-Enne analüüsi kontrollib andmestiku koostaja, et registris on analüüsiveerus
-`Jah` ja kasutatavad kandidaadi-ID-d jäävad lubatud vahemikku. Tootmismudeli
-õpetamisel kontrollib ta lisaks, et registris nimetatud `FINAL` versioon ja
-kontrollsumma vastavad valideerimisartefaktile. Kursusetöö mudelkatse puhul
-piisab analüüsiloa tingimuste täitmisest. Täielikku inimese ülevaatust ei
-korrata.
+Test2 fail: `log/test2_data_b.csv`, SHA-256
+`f96dd98818797d8523cf87c4c4d658c989b7b0e91287f91fbfa82214a04bc183`.
+Päritolu on `docs/kursusetoo/manifestid/test2_manifest.json` failis ja
+ekspordiskript on `docs/kursusetoo/scripts/export_test2.py`. Test2 hinnati
+üksnes GNU Octave'i katses; käivitusjuhend ja tulemus on failis
+`docs/kursusetoo/test2_octave.md`.
 
-Uue `FINAL` versiooni korral tehakse uus valideerimine ja registrikirje
-vaadatakse uuesti üle. Vana valideerimisotsus ei kandu uuele versioonile üle.
+Test2 on 2026-10-20 seisuga fikseeritud vahemiku 30–108 protsessidest, mis
+ei esine tegelikus treeningfailis ning mille kõik aktiivsed automaatse mustandi
+kandidaadid on lõpetatud ja kooskõlaliste otsustega. Koosseisu kuuluvad
+`33, 43, 79–80, 83, 89, 91, 94, 102–105, 107–108`: 337 kandidaati, neist
+62 `ACCEPTED`, 151 `MODIFIED` ja 124 `REJECTED`. Protsess 106 jääb välja,
+sest kõik selle 30 kandidaati on `PENDING`. Test2 CSV ja manifest kasutavad
+samu B-tunnuseid nagu treening- ja Test1-fail; Test2 hinnati ainult GNU
+Octave'i eraldi katses.
 
-## 2. Veergude tähendus
+### Edasine katseplaan, fikseeritud 2026-10-19
 
-| Veerg | `Jah` tähendab |
-|---|---|
-| Analüüsiks | Andmeid võib kasutada kvantitatiivses kandidaadi- ja otsusetüüpide analüüsis. |
-| Õpetamiseks | Otsuseid või parandatud segmente võib kasutada masinõppe märgenditena. |
-| Dokumentatsiooniks | Juhtumit võib kasutada näite, veakirjelduse või regressioonitesti alusena. |
+1. Test2 koosseis on fikseeritud 14 terviksaatega. Sellel hinnati muutmata
+   498 mudeli/tunnusevariandi plaan GNU Octave'is; kõik variandid lõpetasid
+   vigadeta. Test2 eel ei muudetud mudeleid, parameetreid ega tunnusekomplekte.
+2. Test1 ja Test2 võrdlusest selgub, kas mudelite järjestus ja klassipõhised
+   TPR/FPR/FNR-id püsivad. Test1 on pärast variantide võrdlust
+   arendus-/valikukomplekt; Test2 tulemust kasutatakse samuti finalistide
+   valikuks, mitte lõpliku sõltumatu tõestusena.
+3. Pärast finalistide, sealhulgas võimalike mudeliansamblite, fikseerimist
+   koostatakse Test3. See sisaldab seni puutumata terviksaateid, tõenäoliselt
+   protsessidest 109+. Test3 on lõplik sõltumatu võrdluskomplekt.
+4. Seejärel võib koostada uue, umbes 1 500 kandidaadiga treeninghulga ning
+   õpetada sellel uued mudelid. Praeguse 1 006-realise ja uue treeninghulga
+   võrdlus toimub samal enne õpetamist fikseeritud Test3-l. Nii ei tulene
+   erinevus eri raskusega testvalimitest.
 
-## 3. Protsesside register
+Uue treeningu- ja testijaotuse koosseis ning tulemused fikseeritakse eraldi;
+senist jaotust ega tulemusi ei kirjutata ümber. Varasemates katsetes kasutatud
+andmete ajalugu säilib, et neid ei käsitletaks seni puutumata testina.
 
-Registri olek on kontrollitud 2026-10-11.
+### C ja D ümberjaotused, fikseeritud 2026-10-20
 
-| Protsess või andmevahemik | Protsessi olek | `FINAL` versioon | Analüüsiks | Õpetamiseks | Dokumentatsiooniks | Valideerimisalus | Põhjus |
-|---|---|---:|---|---|---|---|---|
-| `#13` — „Reinsalu: Isamaa eesmärk on pöörata 2027. aasta kevadel uus lehekülg” | `FINISHED` | olemas | Ei | Ei | Jah | Analüüsi- ja õppekasutuseks puudub usaldusväärne otsuseliikide valideerimisalus | Kõik 34 ülevaatusotsust salvestati vana UI tõttu `MODIFIED`-na. Tegelikku `ACCEPTED`, `REJECTED` ja `MODIFIED` jaotust ei saa taastada. |
-| `#14`, kandidaadid `130–170` — „Herem alustab ministriametit kaitseväe laoarvestuse analüüsiga” | `IN_REVIEW` | puudub | Jah | Ei | Jah | Kõik 41 kandidaati on lahendatud; 17 `ACCEPTED`, 16 `MODIFIED`, 8 `REJECTED`; `status`, `decision` ja `decision_at` on täielikud ning omavahel kooskõlas | Sobib kandidaadi- ja otsusetüüpide analüüsiks. Õpetamiseks puudub valideeritud `FINAL` versioon. Teadaolevad UI ja naabersegmentide piirangud on dokumenteeritud failis `docs/todo.md`. |
-| `#15`, kandidaadid `171–178` — „Pevkur mürsutehingust: toode pole kasutu vaid ebakvaliteetne” | `IN_REVIEW` | puudub | Ei | Ei | Jah | Puudub | Otsused salvestati enne otsuseliikide parandust `MODIFIED`-na. Struktuurne tulemus on nähtav, kuid otsuse tegelik põhjus pole usaldusväärne. |
-| `#15`, kandidaadid `179–221` — sama saade | `IN_REVIEW` | puudub | Jah | Ei | Jah | Inimese ülevaatus lõpetatud; 23 `ACCEPTED`, 10 `MODIFIED` ja 10 `REJECTED` otsust salvestati parandatud otsuseloogikaga | Vahemik sobib kandidaadi- ja otsusetüüpide analüüsiks. Õpetamiseks ei sobi enne valideeritud `FINAL` versiooni loomist. |
-| `#16`, kandidaadid `222–249` — „Haridusminister: me veel ei tea mitu õpilast jääb koolikohata” | `IN_REVIEW` | puudub | Jah | Ei | Jah | Kõik 28 kandidaati on lahendatud; 12 `ACCEPTED`, 8 `MODIFIED`, 8 `REJECTED`; otsuseväljad on täielikud ja kooskõlalised | Sobib kandidaadi- ja otsusetüüpide analüüsiks. Õpetamiseks puudub valideeritud `FINAL` versioon. |
-| `#17` — „Vahtras: ma ei ole midagi valesti teinud” | `IN_REVIEW` | puudub | Ei | Ei | Jah | Puudub | Kõik 46 ülevaatusotsust salvestati vana UI tõttu `MODIFIED`-na. Otsuseliikide statistika ja nende põhjal loodud õppesildid pole usaldusväärsed. |
-| `#18`, kandidaadid `296–334` — „Kusti Salm: Dataseliga lepingu sõlmimisele eelnes pikk eeltöö” | `IN_REVIEW` | puudub | Jah | Ei | Jah | Kõik 39 kandidaati on lahendatud; 10 `ACCEPTED`, 14 `MODIFIED`, 15 `REJECTED`; otsuseväljad on täielikud ja kooskõlalised | Sobib kandidaadi- ja otsusetüüpide analüüsiks. Õpetamiseks puudub valideeritud `FINAL` versioon. |
-| `#19`, kandidaadid `335–373` — „Kaimo Kuusk: kui minister mind ametist vabastab siis nii see on” | `IN_REVIEW` | puudub | Jah | Ei | Jah | Kõik 39 kandidaati on lahendatud; 28 `ACCEPTED`, 7 `MODIFIED`, 4 `REJECTED`; otsuseväljad on täielikud ja kooskõlalised | Sobib kandidaadi- ja otsusetüüpide analüüsiks. Õpetamiseks puudub valideeritud `FINAL` versioon. |
-| `#20`, kandidaadid `374–395` — „Perling: Tallinna linnavalitsus viljeleb sama poliitikat mis Reformierakond” | `IN_REVIEW` | puudub | Jah | Ei | Jah | Kõik 22 kandidaati on lahendatud; 18 `ACCEPTED`, 2 `MODIFIED`, 2 `REJECTED`; otsuseväljad on täielikud ja kooskõlalised | Sobib kandidaadi- ja otsusetüüpide analüüsiks. Õpetamiseks puudub valideeritud `FINAL` versioon. Lahendatud kandidaadi süsteemiettepaneku API-kuvamise piirang on dokumenteeritud failis `docs/todo.md`. |
-| `#21`, kandidaadid `396–406` — „Kõlvart: ei saa luua illusiooni et uue valitsusega paraneb kõik aastaga” | `IN_REVIEW` | puudub | Jah | Ei | Jah | Kõik 11 kandidaati on lahendatud; 5 `ACCEPTED`, 1 `MODIFIED`, 5 `REJECTED`; otsuseväljad on täielikud ja kooskõlalised | Sobib kandidaadi- ja otsusetüüpide analüüsiks. Õpetamiseks puudub valideeritud `FINAL` versioon. |
-| `#22`, kandidaadid `407–444` — „Anton ja Peek: kliimaseaduse eelnõu ei lahenda ühtegi probleemi” | `IN_REVIEW` | puudub | Jah | Ei | Jah | Kõik 38 kandidaati on lahendatud; 32 `ACCEPTED`, 4 `MODIFIED`, 2 `REJECTED`; otsuseväljad on täielikud ja kooskõlalised | Sobib kandidaadi- ja otsusetüüpide analüüsiks. Õpetamiseks puudub valideeritud `FINAL` versioon. Naabersegmendi korduvpoolitamise piirang ja workaround on dokumenteeritud failis `docs/todo.md`. |
-| `#23`, kandidaadid `445–462` — „Reinsalu koalitsioonist Reformierakonnaga: minu jaoks on see väga keeruline” | `IN_REVIEW` | puudub | Jah | Ei | Jah | Kõik 18 kandidaati on lahendatud; 10 `ACCEPTED`, 3 `MODIFIED`, 5 `REJECTED`; otsuseväljad on täielikud ja kooskõlalised | Sobib kandidaadi- ja otsusetüüpide analüüsiks. Õpetamiseks puudub valideeritud `FINAL` versioon. |
-| `#24`, kandidaadid `463–468` — „Simson EL-i ja Venemaa läbirääkija otsingutest: Kallas ei ole see tase” | `IN_REVIEW` | puudub | Jah | Ei | Jah | Vahemiku kõik 6 kandidaati on lahendatud; 4 `ACCEPTED`, 1 `MODIFIED`, 1 `REJECTED`; otsuseväljad on täielikud ja kooskõlalised | Ainult nimetatud vahemik sobib kandidaadi- ja otsusetüüpide analüüsiks. Õpetamiseks puudub valideeritud `FINAL` versioon. |
-| `#24`, kandidaadid `469–504` — sama saade | `IN_REVIEW` | puudub | Ei | Ei | Jah | Kõik 36 kandidaati on olekus `PENDING` | Ootel kandidaate ei kasutata otsusetüüpide analüüsis ega õpetamisel. Neid võib kasutada poolelioleva ülevaatuse dokumenteerimiseks. |
+C ja D kasutavad ainult praeguste B-treeningu, Test1 ja Test2 failide ühendit:
+kokku 1 831 kandidaati 80 terviksaatest. Mõlemas jaotuses kuulub iga saade
+tervikuna kas treeningusse või testi. Need on kaks eri, osaliselt kattuvat
+reprodutseeritavat 70/30 juhujaotust, mitte Test3 asendajad. Täpne koosseis,
+seemned ja kontrollsummad on failides
+`docs/kursusetoo/manifestid/c_split_manifest.json` ja
+`docs/kursusetoo/manifestid/d_split_manifest.json`; metoodika ning tähistus
+B1/B2/C1/D1/B3/C3/D3 on failis `docs/kursusetoo/c_d_octave.md`.
 
-### 3.1 Täiendatud protsesside register 2026-10-11
+### X kandidaadipõhine kontrolljaotus, fikseeritud 2026-10-20
 
-Allolevad read täiendavad eelmist tabelit andmebaasi lugemispäringu põhjal.
-`IN_REVIEW` ei ole iseseisev kasutuskeeld: analüüsiluba antakse ainult
-konkreetsetele kandidaadi-ID-dele, mille `status` ja `decision` on omavahel
-kooskõlas (`ACCEPTED`, `MODIFIED` või `REJECTED`) ning millel on
-`decision_at`. `PENDING` kandidaadid jäävad välja. Veeru `Õpetamiseks` väärtus
-on `Ei`, sest nendel protsessidel puudub tootmismudeli jaoks valideeritud
-`FINAL` versioon; see ei välista neid kursusetöö mudelkatse andmestikust.
+X kasutab sama 1 831 kandidaadi ja 80 saate ühendit kui C ja D, kuid jagab
+read otsuseklassi järgi stratifikatsiooniga juhuslikult treeninguks ja testiks;
+ühest saatest võivad kandidaadid olla mõlemas pooles. X1 on võrdlusmaterjal
+saatepiirangu mõju hindamiseks, mitte finalistide valikukriteerium. Täpne
+kandidaatide loetelu, OS-i CSPRNG kasutuse kirjeldus ja kontrollsummad on
+failis `docs/kursusetoo/manifestid/x_split_manifest.json`; käivitusjuhend on
+`docs/kursusetoo/x_octave.md`. X3 hinnatakse hiljem samal seni puutumata
+Test3-l nagu B3, C3 ja D3.
 
-| Protsess või kandidaadivahemik | Protsessi olek | `FINAL` versioon | Analüüsiks | Õpetamiseks | Dokumentatsiooniks | Valideerimisalus | Põhjus |
-|---|---|---:|---|---|---|---|---|
-| `#25`, kandidaadid `505–528` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 24 otsust: 14 `ACCEPTED`, 8 `MODIFIED`, 2 `REJECTED`; kõik otsuseväljad kooskõlas | Nimetatud lõpetatud kandidaadid sobivad analüüsiks; `529–566` on `PENDING`. |
-| `#26`, kandidaadid `567–575` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 9 otsust: 5 `ACCEPTED`, 4 `MODIFIED`; kõik otsuseväljad kooskõlas | Nimetatud lõpetatud kandidaadid sobivad analüüsiks; `576–611` on `PENDING`. |
-| `#28`, kandidaadid `650–657` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 8 otsust: kõik `ACCEPTED`; otsuseväljad kooskõlas | Nimetatud lõpetatud kandidaadid sobivad analüüsiks; `658–671` on `PENDING`. |
-| `#29`, kandidaat `672` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 1 `REJECTED` otsus; otsuseväljad kooskõlas | Ainult kandidaat `672` sobib analüüsiks; `673–709` on `PENDING`. |
-| `#31`, kandidaadid `710–714` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 5 otsust: 4 `ACCEPTED`, 1 `MODIFIED`; otsuseväljad kooskõlas | Nimetatud lõpetatud kandidaadid sobivad analüüsiks; `715–735` on `PENDING`. |
-| `#32`, kandidaadid `736–741`, `747–749` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 9 otsust: 4 `ACCEPTED`, 2 `MODIFIED`, 3 `REJECTED`; otsuseväljad kooskõlas | Ainult nimetatud lõpetatud kandidaadid sobivad analüüsiks; ülejäänud on `PENDING`. |
-| `#34`, kandidaadid `845–847` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 3 otsust: 2 `ACCEPTED`, 1 `REJECTED`; otsuseväljad kooskõlas | Nimetatud lõpetatud kandidaadid sobivad analüüsiks; `848–889` on `PENDING`. |
-| `#35`, kandidaadid `890–980` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 91 otsust: 31 `ACCEPTED`, 35 `MODIFIED`, 25 `REJECTED`; kõik otsuseväljad kooskõlas | Kõik protsessi kandidaadid on lõpetatud ja sobivad analüüsiks. |
-| `#36`, kandidaadid `981–992`, `995` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 13 otsust: 11 `ACCEPTED`, 1 `MODIFIED`, 1 `REJECTED`; otsuseväljad kooskõlas | Ainult nimetatud lõpetatud kandidaadid sobivad analüüsiks; ülejäänud on `PENDING`. |
-| `#37`, kandidaadid `1005–1009`, `1019` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 6 otsust: 4 `ACCEPTED`, 1 `MODIFIED`, 1 `REJECTED`; otsuseväljad kooskõlas | Ainult nimetatud lõpetatud kandidaadid sobivad analüüsiks; ülejäänud on `PENDING`. |
-| `#38`, kandidaadid `1032–1047` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 16 otsust: 12 `ACCEPTED`, 3 `MODIFIED`, 1 `REJECTED`; otsuseväljad kooskõlas | Nimetatud lõpetatud kandidaadid sobivad analüüsiks; `1048–1097` on `PENDING`. |
-| `#39`, kandidaadid `1098–1102` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 5 otsust: 4 `ACCEPTED`, 1 `REJECTED`; otsuseväljad kooskõlas | Nimetatud lõpetatud kandidaadid sobivad analüüsiks; `1103–1135` on `PENDING`. |
-| `#40`, kandidaadid `1136–1137` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 2 otsust: 1 `ACCEPTED`, 1 `MODIFIED`; otsuseväljad kooskõlas | Nimetatud lõpetatud kandidaadid sobivad analüüsiks; `1138–1168` on `PENDING`. |
-| `#41`, kandidaadid `1169–1175` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 7 `ACCEPTED` otsust; otsuseväljad kooskõlas | Nimetatud lõpetatud kandidaadid sobivad analüüsiks; `1176–1196` on `PENDING`. |
-| `#42`, kandidaadid `1197–1198` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 2 otsust: 1 `ACCEPTED`, 1 `REJECTED`; otsuseväljad kooskõlas | Nimetatud lõpetatud kandidaadid sobivad analüüsiks; `1199–1239` on `PENDING`. |
-| `#44`, kandidaadid `1260–1261` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 2 otsust: 1 `ACCEPTED`, 1 `MODIFIED`; otsuseväljad kooskõlas | Nimetatud lõpetatud kandidaadid sobivad analüüsiks; `1262–1310` on `PENDING`. |
-| `#47`, kandidaadid `1370–1372`, `1389`, `1392–1395` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 8 otsust: 6 `ACCEPTED`, 1 `MODIFIED`, 1 `REJECTED`; otsuseväljad kooskõlas | Ainult nimetatud lõpetatud kandidaadid sobivad analüüsiks; ülejäänud on `PENDING`. |
-| `#48`, kandidaadid `1396–1398`, `1412–1416` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 8 otsust: 6 `ACCEPTED`, 1 `MODIFIED`, 1 `REJECTED`; otsuseväljad kooskõlas | Ainult nimetatud lõpetatud kandidaadid sobivad analüüsiks; ülejäänud on `PENDING`. |
-| `#55`, kandidaadid `1620–1624` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 5 otsust: 3 `MODIFIED`, 2 `REJECTED`; kõik otsuseväljad kooskõlas | Kõik protsessi kandidaadid on lõpetatud ja sobivad analüüsiks. |
-| `#57`, kandidaadid `1625–1635` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 11 otsust: 7 `MODIFIED`, 4 `REJECTED`; kõik otsuseväljad kooskõlas | Kõik protsessi kandidaadid on lõpetatud ja sobivad analüüsiks. |
-| `#58`, kandidaadid `1636–1654` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 19 otsust: 4 `ACCEPTED`, 13 `MODIFIED`, 2 `REJECTED`; kõik otsuseväljad kooskõlas | Kõik protsessi kandidaadid on lõpetatud ja sobivad analüüsiks. |
-| `#59`, kandidaadid `1655–1674`, `1676–1681`, `1683–1684` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 28 otsust: 1 `ACCEPTED`, 15 `MODIFIED`, 12 `REJECTED`; otsuseväljad kooskõlas | Ainult nimetatud lõpetatud kandidaadid sobivad analüüsiks; ülejäänud on `PENDING`. |
-| `#61`, kandidaadid `1732–1744` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 13 otsust: 8 `MODIFIED`, 5 `REJECTED`; kõik otsuseväljad kooskõlas | Kõik protsessi kandidaadid on lõpetatud ja sobivad analüüsiks. |
-| `#62`, kandidaadid `1745–1753` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 9 otsust: 1 `ACCEPTED`, 7 `MODIFIED`, 1 `REJECTED`; kõik otsuseväljad kooskõlas | Kõik protsessi kandidaadid on lõpetatud ja sobivad analüüsiks. |
-| `#63`, kandidaadid `1754–1761` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 8 otsust: 1 `ACCEPTED`, 4 `MODIFIED`, 3 `REJECTED`; otsuseväljad kooskõlas | Nimetatud lõpetatud kandidaadid sobivad analüüsiks; `1762–1779` on `PENDING`. |
-| `#64`, kandidaadid `1780–1784` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 5 otsust: 3 `MODIFIED`, 2 `REJECTED`; kõik otsuseväljad kooskõlas | Kõik protsessi kandidaadid on lõpetatud ja sobivad analüüsiks. |
-| `#65`, kandidaadid `1785–1789` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 5 otsust: 3 `MODIFIED`, 2 `REJECTED`; otsuseväljad kooskõlas | Nimetatud lõpetatud kandidaadid sobivad analüüsiks; `1790–1816` on `PENDING`. |
-| `#66`, kandidaadid `1817–1823` | `IN_REVIEW` | puudub | Jah | Ei | Jah | 7 otsust: 1 `ACCEPTED`, 3 `MODIFIED`, 3 `REJECTED`; kõik otsuseväljad kooskõlas | Kõik protsessi kandidaadid on lõpetatud ja sobivad analüüsiks. |
+### Y kandidaadipõhine kontrolljaotus, fikseeritud 2026-10-20
 
-## 4. Kasutuspiirangud
+Y on X-ist sõltumatu kandidaatide kaupa stratified 70/30 juhujaotus samast
+1 831 kandidaadi ja 80 saate ühendist. Saatepiirangut ei rakendata; ühe saate
+kandidaadid võivad olla nii Y-treeningus kui Y1 testis. Y1 kordab X1
+kontrolli teise juhujaotusega. Täpne kandidaatide loetelu, X1 testiosaga
+kattuvus, CSPRNG kasutus ja kontrollsummad on failis
+`docs/kursusetoo/manifestid/y_split_manifest.json`; käivitusjuhend on
+`docs/kursusetoo/y_octave.md`.
 
-- `Dokumentatsiooniks: Jah` ei anna õigust kasutada sama rida analüüsi- või
-  õppeandmestikus.
-- Kursusetöö mudelkatse puhul tähendab `Analüüsiks: Jah`, et nimetatud
-  kandidaadivahemik sobib treeningu-, valideerimis- või testandmestikku.
-  See ei eelda `FINAL` versiooni ega protsessi lõppolekut.
-- `#13` ja `#17` sobivad paranduste, veatüüpide ja regressioonijuhtumite
-  kirjeldamiseks, kuid mitte otsuseliikide osakaalude arvutamiseks.
-- `#15` kandidaatide `171–178` puhul võib dokumenteerida tekkinud poolitusi ja
-  ümberomistamisi, kuid neid ei loeta `ACCEPTED`, `REJECTED` või `MODIFIED`
-  statistika sisse.
-- Protsessist `#24` võib analüüsida ainult kandidaate `463–468`; kandidaadid
-  `469–504` on endiselt üle vaatamata.
-- Sama intervjuud ei kasutata korraga mudeli õpetamiseks ja selle mudeli
-  sõltumatuks hindamiseks.
+## Analüüsiks lubatud kandidaatide register
+
+Treeningu kandidaadivahemikud pärinevad 2026-10-14 registrist ja vastavad
+fikseeritud treeningfailile. Test1 read kontrolliti 2026-10-19 ning Test2
+read 2026-10-20 andmebaasi lugemispäringuga. Loendus hõlmab aktiivse
+`AUTOMATIC_DRAFT` versiooni aktiivseid segmente ja kandidaate; `status`
+peab võrduma `decision`-iga ning `decision_at` peab olema täidetud.
+Tabeli otsuste jaotus on `ACCEPTED / MODIFIED / REJECTED`.
+
+| Protsess | Kandidaadid | Analüüsiks | Õpetamiseks | Otsuseid | Jaotus | Põhjus |
+|---:|---|---|---|---:|---|---|
+| 14 | `130–170` | Jah | Ei | 41 | 17 / 16 / 8 | Kooskõlalised inimese otsused |
+| 15 | `179–221` | Jah | Ei | 43 | 23 / 10 / 10 | Kooskõlalised inimese otsused |
+| 16 | `222–249` | Jah | Ei | 28 | 12 / 8 / 8 | Kooskõlalised inimese otsused |
+| 18 | `296–334` | Jah | Ei | 39 | 10 / 14 / 15 | Kooskõlalised inimese otsused |
+| 19 | `335–373` | Jah | Ei | 39 | 28 / 7 / 4 | Kooskõlalised inimese otsused |
+| 20 | `374–395` | Jah | Ei | 22 | 18 / 2 / 2 | Kooskõlalised inimese otsused |
+| 21 | `396–406` | Jah | Ei | 11 | 5 / 1 / 5 | Kooskõlalised inimese otsused |
+| 22 | `407–444` | Jah | Ei | 38 | 32 / 4 / 2 | Kooskõlalised inimese otsused |
+| 23 | `445–462` | Jah | Ei | 18 | 10 / 3 / 5 | Kooskõlalised inimese otsused |
+| 24 | `463–504` | Jah | Ei | 42 | 34 / 4 / 4 | Kooskõlalised inimese otsused |
+| 25 | `505–528` | Jah | Ei | 24 | 14 / 8 / 2 | Kooskõlalised inimese otsused |
+| 26 | `567–611` | Jah | Ei | 45 | 27 / 15 / 3 | Kooskõlalised inimese otsused |
+| 27 | `612–649` | Jah | Ei | 38 | 24 / 5 / 9 | Kooskõlalised inimese otsused |
+| 28 | `650–671` | Jah | Ei | 22 | 19 / 2 / 1 | Kooskõlalised inimese otsused |
+| 29 | `672–709` | Jah | Ei | 38 | 17 / 8 / 13 | Kooskõlalised inimese otsused |
+| 31 | `710–735` | Jah | Ei | 26 | 18 / 5 / 3 | Kooskõlalised inimese otsused |
+| 32 | `736–792` | Jah | Ei | 57 | 27 / 20 / 10 | Kooskõlalised inimese otsused |
+| 33 | `793–844` | Jah | Ei | 52 | 32 / 9 / 11 | Test2; kõik kandidaadid üle vaadatud |
+| 34 | `845–848` | Jah | Ei | 4 | 3 / 0 / 1 | Kooskõlalised inimese otsused |
+| 35 | `890–980` | Jah | Ei | 91 | 31 / 35 / 25 | Kooskõlalised inimese otsused |
+| 36 | `981–1004` | Jah | Ei | 24 | 20 / 2 / 2 | Kooskõlalised inimese otsused |
+| 37 | `1005–1009, 1019` | Jah | Ei | 6 | 4 / 1 / 1 | Kooskõlalised inimese otsused |
+| 38 | `1032–1047` | Jah | Ei | 16 | 12 / 3 / 1 | Kooskõlalised inimese otsused |
+| 39 | `1098–1129` | Jah | Ei | 32 | 26 / 1 / 5 | Kooskõlalised inimese otsused |
+| 40 | `1136–1137` | Jah | Ei | 2 | 1 / 1 / 0 | Kooskõlalised inimese otsused |
+| 41 | `1169–1175` | Jah | Ei | 7 | 7 / 0 / 0 | Kooskõlalised inimese otsused |
+| 42 | `1197–1239` | Jah | Ei | 43 | 29 / 9 / 5 | Kooskõlalised inimese otsused |
+| 43 | `1240–1259` | Jah | Ei | 20 | 15 / 0 / 5 | Test2; kõik kandidaadid üle vaadatud |
+| 44 | `1260–1261` | Jah | Ei | 2 | 1 / 1 / 0 | Kooskõlalised inimese otsused |
+| 47 | `1370–1372, 1389, 1392–1395` | Jah | Ei | 8 | 6 / 1 / 1 | Kooskõlalised inimese otsused |
+| 48 | `1396–1398, 1412–1416` | Jah | Ei | 8 | 6 / 1 / 1 | Kooskõlalised inimese otsused |
+| 49 | `1417–1427` | Jah | Ei | 11 | 3 / 5 / 3 | Kooskõlalised inimese otsused |
+| 50 | `1456–1491` | Jah | Ei | 36 | 18 / 10 / 8 | Kooskõlalised inimese otsused |
+| 53 | `1571–1592` | Jah | Ei | 22 | 2 / 11 / 9 | Kooskõlalised inimese otsused |
+| 54 | `1593–1619` | Jah | Ei | 27 | 1 / 16 / 10 | Kooskõlalised inimese otsused |
+| 55 | `1620–1624` | Jah | Ei | 5 | 0 / 3 / 2 | Kooskõlalised inimese otsused |
+| 57 | `1625–1635` | Jah | Ei | 11 | 0 / 7 / 4 | Kooskõlalised inimese otsused |
+| 58 | `1636–1654` | Jah | Ei | 19 | 4 / 13 / 2 | Kooskõlalised inimese otsused |
+| 59 | `1655–1700` | Jah | Ei | 46 | 3 / 21 / 22 | Kooskõlalised inimese otsused |
+| 61 | `1732–1744` | Jah | Ei | 13 | 0 / 8 / 5 | Kooskõlalised inimese otsused |
+| 62 | `1745–1753` | Jah | Ei | 9 | 1 / 7 / 1 | Kooskõlalised inimese otsused |
+| 63 | `1754–1779` | Jah | Ei | 26 | 1 / 16 / 9 | Kooskõlalised inimese otsused |
+| 64 | `1780–1784` | Jah | Ei | 5 | 0 / 3 / 2 | Kooskõlalised inimese otsused |
+| 65 | `1785–1816` | Jah | Ei | 32 | 0 / 26 / 6 | Kooskõlalised inimese otsused |
+| 66 | `1817–1823` | Jah | Ei | 7 | 1 / 3 / 3 | Kooskõlalised inimese otsused |
+| 67 | `1824–1837` | Jah | Ei | 14 | 0 / 7 / 7 | Kooskõlalised inimese otsused |
+| 69 | `1855–1863` | Jah | Ei | 9 | 1 / 5 / 3 | Kooskõlalised inimese otsused |
+| 71 | `1927–1960` | Jah | Ei | 34 | 1 / 25 / 8 | Kooskõlalised inimese otsused |
+| 72 | `1984–1999` | Jah | Ei | 16 | 0 / 9 / 7 | Kooskõlalised inimese otsused |
+| 75 | `2048–2062` | Jah | Ei | 15 | 4 / 6 / 5 | Kooskõlalised inimese otsused |
+| 76 | `2063–2081` | Jah | Ei | 19 | 0 / 10 / 9 | Kooskõlalised inimese otsused |
+| 77 | `2082–2106` | Jah | Ei | 25 | 0 / 19 / 6 | Kooskõlalised inimese otsused |
+| 78 | `2107–2125` | Jah | Ei | 19 | 1 / 14 / 4 | Kooskõlalised inimese otsused |
+| 79 | `2126–2151` | Jah | Ei | 26 | 2 / 13 / 11 | Test2; kõik kandidaadid üle vaadatud |
+| 80 | `2152–2228` | Jah | Ei | 77 | 2 / 49 / 26 | Test2; kõik kandidaadid üle vaadatud |
+| 81 | `2229–2243` | Jah | Ei | 15 | 1 / 10 / 4 | Kooskõlalised inimese otsused |
+| 82 | `2244–2254` | Jah | Ei | 11 | 0 / 7 / 4 | Kooskõlalised inimese otsused |
+| 83 | `2255–2298` | Jah | Ei | 44 | 2 / 26 / 16 | Test2; kõik kandidaadid üle vaadatud |
+| 84 | `2299–2309` | Jah | Ei | 11 | 0 / 9 / 2 | Kooskõlalised inimese otsused |
+| 85 | `2310–2339` | Jah | Ei | 30 | 1 / 13 / 16 | Kooskõlalised inimese otsused |
+| 86 | `2340–2346` | Jah | Ei | 7 | 1 / 2 / 4 | Kooskõlalised inimese otsused |
+| 88 | `2410–2417` | Jah | Ei | 8 | 3 / 4 / 1 | Kooskõlalised inimese otsused |
+| 89 | `2418–2442` | Jah | Ei | 25 | 2 / 11 / 12 | Test2; kõik kandidaadid üle vaadatud |
+| 90 | `2443–2471` | Jah | Ei | 29 | 2 / 13 / 14 | Kooskõlalised inimese otsused |
+| 91 | `2472–2482` | Jah | Ei | 11 | 2 / 7 / 2 | Test2; kõik kandidaadid üle vaadatud |
+| 93 | `2535–2552` | Jah | Ei | 18 | 0 / 8 / 10 | Kooskõlalised inimese otsused |
+| 94 | `2553–2562` | Jah | Ei | 10 | 0 / 3 / 7 | Test2; kõik kandidaadid üle vaadatud |
+| 95 | `2563–2585` | Jah | Ei | 23 | 0 / 13 / 10 | Kooskõlalised inimese otsused |
+| 96 | `2586–2588` | Jah | Ei | 3 | 0 / 2 / 1 | Kooskõlalised inimese otsused |
+| 97 | `2589–2610` | Jah | Ei | 22 | 2 / 5 / 15 | Kooskõlalised inimese otsused |
+| 98 | `2611–2625` | Jah | Ei | 15 | 2 / 9 / 4 | Kooskõlalised inimese otsused |
+| 99 | `2626–2647` | Jah | Ei | 22 | 3 / 12 / 7 | Kooskõlalised inimese otsused |
+| 100 | `2648–2665` | Jah | Ei | 18 | 3 / 9 / 6 | Kooskõlalised inimese otsused |
+| 101 | `2666–2693` | Jah | Ei | 28 | 1 / 14 / 13 | Kooskõlalised inimese otsused |
+| 102 | `2694–2715` | Jah | Ei | 22 | 0 / 12 / 10 | Test2; kõik kandidaadid üle vaadatud |
+| 103 | `2716–2720` | Jah | Ei | 5 | 0 / 2 / 3 | Test2; kõik kandidaadid üle vaadatud |
+| 104 | `2721–2727` | Jah | Ei | 7 | 0 / 3 / 4 | Test2; kõik kandidaadid üle vaadatud |
+| 105 | `2728–2739` | Jah | Ei | 12 | 2 / 3 / 7 | Test2; kõik kandidaadid üle vaadatud |
+| 107 | `2770–2784` | Jah | Ei | 15 | 3 / 6 / 6 | Test2; kõik kandidaadid üle vaadatud |
+| 108 | `2785–2795` | Jah | Ei | 11 | 0 / 7 / 4 | Test2; kõik kandidaadid üle vaadatud |
+
+## Kasutuspiirangud
+
+- Kursusetöö mudelkatse kasutab ainult tabeli `Analüüsiks: Jah` ridu.
+- Sama saate segmendid peavad jääma ühte andmehulka: kas treeningusse,
+  valideerimisse või testi.
+- Uued lõpetatud kandidaadid lisatakse registrisse alles pärast nende
+  `status`, `decision` ja `decision_at` kooskõla kontrolli.

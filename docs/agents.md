@@ -81,6 +81,7 @@
 - [`docs/task_to_solve.md`](task_to_solve.md)
 - [`docs/agents.md`](agents.md)
 - [`docs/evaluation_data.md`](evaluation_data.md)
+- [`docs/kursusetoo/README.md`](kursusetoo/README.md)
 - [`docs/err2text_bpmn.drawio`](err2text_bpmn.drawio)
 - [`docs/err2text_bpmn.drawio.png`](err2text_bpmn.drawio.png)
 - [`db/erd.md`](../db/erd.md)

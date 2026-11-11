@@ -74,9 +74,10 @@ mudelit.
 3. **Semantilise kandidaadi mudel** järjestab juba loodud semantilised
    kandidaadid selle järgi, milliseid neist inimesele näidata.
 
-Esimese mudeli binaarne kõrvalsiht on `correction_required`: `1` tähendab
-`ACCEPTED` või `MODIFIED`, `0` tähendab `REJECTED`. Seda kasutatakse lihtsa
-võrdluskatse jaoks; põhiülesanne on kolmeklassiline ennustus.
+Esimese mudeli binaarne kõrvalsiht on `human_action_required`: `1` tähendab
+`MODIFIED`, `0` tähendab `ACCEPTED` või `REJECTED`. See eristab kandidaate,
+mille puhul inimene peab süsteemi pakutut muutma; põhiülesanne on
+kolmeklassiline ennustus.
 
 ## 3. Uurimisküsimus ja hüpoteesid
 
@@ -118,35 +119,35 @@ Algandmed pärinevad järgmistest süsteemi osadest:
 | Tehniline kandidaat | `review_candidates` | kandidaadi tüüp ja inimese lõppotsus |
 | Inimese tehtud parandus | ülevaatusotsus ning seotud parandused | sihtmärgend ja juhtumi kontroll |
 
-### 4.2 Olemasolev näidisandmestik
+### 4.2 Olemasolev andmestik
 
-Tegelike andmete väljavõte on failis [log/test_data.md](../log/test_data.md).
-Seal on 614 inimese lahendatud tehnilist kandidaati protsessidest `#14–#66`;
-kasutatud on ainult failis [evaluation_data.md](evaluation_data.md)
-analüüsiks lubatud kandidaatide ID-vahemikke. Tabel näitab iga kandidaadi
-segmenti, pikkust, sõnade arvu, kõneleja-ajavahemike arvu, kõnelejate arvu,
-maksimaalset kindlust, kandidaaditüüpi ja inimese otsust.
+Andmestik on kahes eraldi CSV-failis: [treeningandmed](../log/test_data_process_30_to_end_with_show_speaker_count.csv)
+sisaldavad 1 006 kandidaati protsessidest `#31–#101` ning
+[väline test](../log/test_data_external_processes_14_to_29.csv) 341 kandidaati
+protsessidest `#14–#29`. Kasutatud on ainult failis
+[evaluation_data.md](evaluation_data.md) analüüsiks lubatud kandidaatide
+ID-vahemikke.
 
-Näidistabel näitab eelkõige andmete kuju ja tunnuste arvutamist; lõplik
-eksperimentaalne andmestik kogutakse suuremast hulgast eri saadetest. Enne
-õpetamist kontrollitakse, et kasutatavatel ridadel oleks üheselt tõlgendatav
-inimotsus.
+Iga rida sisaldab segmendi pikkust, sõnade arvu, kõneleja-ajavahemike arvu,
+kõnelejate arvu, maksimaalset kindlust, saate kõnelejate arvu,
+kandidaaditüüpi, inimese otsust ja sellest tuletatud
+`human_action_required` märgendit.
 
 ### 4.3 Projekti andmekogu hetkeseis
 
-Andmebaasi 2026-10-11 lugemispäringu järgi sisaldab projekt praegu 64
+Andmebaasi 2026-10-14 lugemispäringu järgi sisaldab projekt praegu 89
 protsessi, millel on aktiivne automaatne transkriptsiooniversioon. Nendes on
-kokku 35 400 segmenti ja 2 030 tehnilist ülevaatuskandidaati.
+kokku 50 054 segmenti ja 2 620 tehnilist ülevaatuskandidaati.
 
 | Kandidaadi seis | Ridade arv |
 |---|---:|
-| `ACCEPTED` | 288 |
-| `MODIFIED` | 279 |
-| `REJECTED` | 135 |
-| `PENDING` | 1 328 |
-| Kokku | 2 030 |
+| `ACCEPTED` | 448 |
+| `MODIFIED` | 624 |
+| `REJECTED` | 372 |
+| `PENDING` | 1 176 |
+| Kokku | 2 620 |
 
-Seega on praegu 702 lõpetatud inimese otsusega kandidaati. Need on esmane
+Seega on praegu 1 444 lõpetatud inimese otsusega kandidaati. Need on esmane
 allikas tunnuste väljavõtte, andmekvaliteedi kontrolli ja pilootmudeli jaoks.
 `PENDING` olekus kandidaadid ei ole veel õppesildiga read. Vanemate või
 teadaolevalt ebaselge otsuseloogikaga ridade kasutuskõlblikkust kontrollitakse
@@ -247,7 +248,7 @@ Identifikaatoreid ja inimese otsust mudeli sisendiks ei anta.
 
 1. Koostada korratav eksport tehniliste kandidaatide ja tehnilise vooru
    transkriptsioonitasandi kokkuvõtete jaoks.
-2. Teha 702 juba lõpetatud kandidaadist andmekvaliteedi audit ning moodustada
+2. Teha 1 444 juba lõpetatud kandidaadist andmekvaliteedi audit ning moodustada
    sellest esimene pilootvalim.
 3. Koguda ja inimese poolt üle vaadata tehnilised kandidaadid mitmest eri
    saateformaadist, sealhulgas kahe osalejaga intervjuud, vestlusringid ja
@@ -314,7 +315,9 @@ koosseisu.
 
 - [Lähteülesanne ja töövoog](task_to_solve.md)
 - [MVP2.2 autoriteetne ülevaatusvoog ja kandidaatide reeglid](MVP2.2.md)
-- [Andmete koosseis ja tegelike näidete tabel](../log/test_data.md)
+- [Andmete koosseisu koondtabel](kursusetoo/andmestik_ajalooline_test.md)
+- [Treeningandmed](../log/test_data_process_30_to_end_with_show_speaker_count.csv)
+- [Väline testandmestik](../log/test_data_external_processes_14_to_29.csv)
 - [Andmemudel](../db/erd.md)
 - [Andmebaasi põhiskeem](../db/schema/001_core_schema.sql)
 - [Osalejate ülevaatuse näidete valimise loogika](../backend/app/services/participant_review.py)

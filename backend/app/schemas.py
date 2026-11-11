@@ -40,12 +40,28 @@ class ParticipantCreateRequest(BaseModel):
     description: str | None = Field(default=None, max_length=4000)
     organisation: str | None = Field(default=None, max_length=500)
     occupation: str | None = Field(default=None, max_length=500)
+    role: str | None = Field(default=None, max_length=120)
+    party_id: int | None = Field(default=None, gt=0)
+    is_politician: Literal["JAH", "EI"] = "EI"
+    political_alignment: Literal["KOALITSIOON", "OPOSITSIOON", "NONE"] = "NONE"
+
+
+class PartyCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=500)
+    short_name: str | None = Field(default=None, max_length=120)
 
 
 class SpeakerMapping(BaseModel):
     speaker_label: str = Field(min_length=1, max_length=80)
     participant_id: int | None = Field(default=None, gt=0)
+    description: str | None = Field(default=None, max_length=4000)
     role: str | None = Field(default=None, max_length=120)
+    organisation: str | None = Field(default=None, max_length=500)
+    occupation: str | None = Field(default=None, max_length=500)
+    party_id: int | None = Field(default=None, gt=0)
+    is_politician: Literal["JAH", "EI"] | None = None
+    political_alignment: Literal["KOALITSIOON", "OPOSITSIOON", "NONE"] | None = None
+    save_as_default: bool = False
     mapping_status: Literal["UNCONFIRMED", "CONFIRMED", "UNKNOWN"]
 
 

@@ -130,3 +130,19 @@
   SQL-i võrdlus peab kasutama sama normaliseerimist, mitte suvalist tolerantsi.
 - **Leitud:** 2026-10-08
 - **Lahendatud:** 2026-10-08 — ajaväärtused normaliseeritakse `NUMBER(12,3)` täpsusele enne võrdlust, deduplikatsiooni ja INSERT-i; kandidaadi 219 unikaalsuskonflikt ei tohiks enam tekkida.
+
+## 2026-10-19 — avalehe `/jobs` loendipiir on koodis fikseeritud
+
+- **Probleem:** avalehe protsessiloendi endpointi vaikepiir on rakenduse koodis
+  fikseeritud väärtusele 200. Kui protsesside arv kasvab sellest suuremaks,
+  ei ole loendipiiri võimalik keskkonnaseadistuseta muuta.
+- **Mõju:** avaleht võib jätta vanemad protsessid kuvamata ning loendipiiri
+  muutmiseks tuleb muuta ja juurutada rakenduse koodi.
+- **Koht koodis:** `backend/app/api/routes.py`, funktsioon `list_jobs()`;
+  `/jobs` endpointi `limit`-parameetri vaikeväärtus ja maksimum.
+- **Võimalik lahendus:** viia vaikepiir keskkonnamuutujasse, näiteks
+  `HOME_JOBS_LIMIT`, valideerida selle lubatud vahemik ning kasutada sama
+  väärtust `/jobs` endpointi vaikimisi piirina. Avalehe ülejäänud päringu- ja
+  kuvamisloogikat ei muudeta.
+- **Leitud:** 2026-10-19, avalehe protsessiloendi piirangu kontrollimisel.
+- **Lahendatud:** Ei.

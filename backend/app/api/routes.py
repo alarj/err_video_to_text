@@ -16,6 +16,7 @@ from app.schemas import (
     CreateJobRequest,
     JobResponse,
     ParticipantCreateRequest,
+    PartyCreateRequest,
     ReviewCandidateRequest,
     ParticipantReviewRequest,
     ResolveRequest,
@@ -120,6 +121,61 @@ def _utc_iso(value: datetime | None) -> str | None:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _participant_response(row: tuple[object, ...] | None) -> dict[str, object]:
+    if row is None:
+        raise HTTPException(status_code=409, detail="Participant profile was not created")
+    return {
+        "id": row[0],
+        "name": row[1],
+        "description": row[2],
+        "organisation": row[3],
+        "occupation": row[4],
+        "role": row[5],
+        "party_id": row[6],
+        "party_name": row[7],
+        "is_politician": row[8],
+        "political_alignment": row[9],
+    }
+
+
+def _require_party(cursor: object, party_id: int | None) -> str | None:
+    if party_id is None:
+        return None
+    cursor.execute(
+        "SELECT name FROM parties WHERE id = :party_id AND end_date IS NULL",
+        {"party_id": party_id},
+    )
+    row = cursor.fetchone()
+    if row is None:
+        raise HTTPException(status_code=422, detail=f"Party not found: {party_id}")
+    return str(row[0])
+
+
+def _replace_participant_details(cursor: object, participant_id: int, mapping: object) -> None:
+    cursor.execute(
+        """UPDATE participant_details
+              SET end_date = SYSDATE, last_updated = SYSTIMESTAMP
+            WHERE participant_id = :participant_id AND end_date IS NULL""",
+        {"participant_id": participant_id},
+    )
+    cursor.execute(
+        """INSERT INTO participant_details
+               (participant_id, organisation, occupation, role, party_id,
+                is_politician, political_alignment)
+           VALUES (:participant_id, :organisation, :occupation, :role, :party_id,
+                   :is_politician, :political_alignment)""",
+        {
+            "participant_id": participant_id,
+            "organisation": mapping.organisation,
+            "occupation": mapping.occupation,
+            "role": mapping.role,
+            "party_id": mapping.party_id,
+            "is_politician": mapping.is_politician or "EI",
+            "political_alignment": mapping.political_alignment or "NONE",
+        },
+    )
+
+
 @router.post("/resolve")
 def resolve_url(request: ResolveRequest) -> dict[str, object]:
     try:
@@ -184,7 +240,7 @@ def create_job(request: CreateJobRequest) -> JobResponse:
 
 
 @router.get("/jobs")
-def list_jobs(limit: int = Query(default=100, ge=1, le=200)) -> list[dict[str, object]]:
+def list_jobs(limit: int = Query(default=200, ge=1, le=200)) -> list[dict[str, object]]:
     with connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -280,9 +336,7 @@ def list_jobs(limit: int = Query(default=100, ge=1, le=200)) -> list[dict[str, o
                     ON tp.transcript_version_id = pv.id
                    AND tp.end_date IS NULL
                    AND tp.mapping_status = 'CONFIRMED'
-                  JOIN participants p
-                    ON p.id = tp.participant_id
-                   AND p.end_date IS NULL
+                  JOIN participants_v p ON p.id = tp.participant_id
                  WHERE pv.version_rank = 1
             )
             SELECT process_id, participant_id, participant_name
@@ -330,9 +384,10 @@ def search_participants(query: str = Query(default="", max_length=200), limit: i
     with connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            """SELECT id, name, description, organisation, occupation
-                 FROM participants
-                WHERE end_date IS NULL
+            """SELECT id, name, description, organisation, occupation, role,
+                      party_id, party_name, is_politician, political_alignment
+                 FROM participants_v
+                WHERE 1 = 1
                   AND (:query IS NULL OR LOWER(name) LIKE '%' || LOWER(:query) || '%')
                 ORDER BY name, id
                 FETCH FIRST :limit ROWS ONLY""",
@@ -345,9 +400,31 @@ def search_participants(query: str = Query(default="", max_length=200), limit: i
                 "description": row[2],
                 "organisation": row[3],
                 "occupation": row[4],
+                "role": row[5],
+                "party_id": row[6],
+                "party_name": row[7],
+                "is_politician": row[8],
+                "political_alignment": row[9],
             }
             for row in cursor.fetchall()
         ]
+
+
+@router.get("/participants/{participant_id}")
+def get_participant(participant_id: int) -> dict[str, object]:
+    with connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """SELECT id, name, description, organisation, occupation, role,
+                      party_id, party_name, is_politician, political_alignment
+                 FROM participants_v
+                WHERE id = :participant_id""",
+            {"participant_id": participant_id},
+        )
+        row = cursor.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Participant not found: {participant_id}")
+    return _participant_response(row)
 
 
 @router.post("/participants", status_code=201)
@@ -359,44 +436,104 @@ def create_participant(request: ParticipantCreateRequest) -> dict[str, object]:
         cursor = conn.cursor()
         try:
             cursor.execute(
-                """SELECT id, name, description, organisation, occupation
-                     FROM participants
-                    WHERE end_date IS NULL AND LOWER(name) = LOWER(:name)
+                """SELECT id, name, description, organisation, occupation, role,
+                          party_id, party_name, is_politician, political_alignment
+                     FROM participants_v
+                    WHERE LOWER(name) = LOWER(:name)
                     ORDER BY id
                     FETCH FIRST 1 ROW ONLY""",
                 {"name": name},
             )
             existing = cursor.fetchone()
             if existing is not None:
-                return {
-                    "id": existing[0],
-                    "name": existing[1],
-                    "description": existing[2],
-                    "organisation": existing[3],
-                    "occupation": existing[4],
-                }
+                return _participant_response(existing)
+            _require_party(cursor, request.party_id)
             participant_var = cursor.var(int)
             cursor.execute(
-                """INSERT INTO participants (name, description, organisation, occupation)
-                   VALUES (:name, :description, :organisation, :occupation)
+                """INSERT INTO participants (name, description)
+                   VALUES (:name, :description)
                    RETURNING id INTO :participant_id""",
                 {
                     "name": name,
                     "description": request.description,
-                    "organisation": request.organisation,
-                    "occupation": request.occupation,
                     "participant_id": participant_var,
                 },
             )
             participant_id = int(participant_var.getvalue()[0])
+            cursor.execute(
+                """INSERT INTO participant_details
+                       (participant_id, organisation, occupation, role, party_id,
+                        is_politician, political_alignment)
+                   VALUES (:participant_id, :organisation, :occupation, :role, :party_id,
+                           :is_politician, :political_alignment)""",
+                {
+                    "participant_id": participant_id,
+                    "organisation": request.organisation,
+                    "occupation": request.occupation,
+                    "role": request.role,
+                    "party_id": request.party_id,
+                    "is_politician": request.is_politician,
+                    "political_alignment": request.political_alignment,
+                },
+            )
             conn.commit()
-            return {
-                "id": participant_id,
-                "name": name,
-                "description": request.description,
-                "organisation": request.organisation,
-                "occupation": request.occupation,
-            }
+            cursor.execute(
+                """SELECT id, name, description, organisation, occupation, role,
+                          party_id, party_name, is_politician, political_alignment
+                     FROM participants_v
+                    WHERE id = :participant_id""",
+                {"participant_id": participant_id},
+            )
+            return _participant_response(cursor.fetchone())
+        except Exception:
+            conn.rollback()
+            raise
+
+
+@router.get("/parties")
+def list_parties(query: str = Query(default="", max_length=200), limit: int = Query(default=100, ge=1, le=200)) -> list[dict[str, object]]:
+    with connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """SELECT id, name, short_name
+                 FROM parties
+                WHERE end_date IS NULL
+                  AND (:query IS NULL OR LOWER(name) LIKE '%' || LOWER(:query) || '%')
+                ORDER BY NLSSORT(name, 'NLS_SORT=ESTONIAN'), id
+                FETCH FIRST :limit ROWS ONLY""",
+            {"query": query.strip() or None, "limit": limit},
+        )
+        return [{"id": row[0], "name": row[1], "short_name": row[2]} for row in cursor.fetchall()]
+
+
+@router.post("/parties", status_code=201)
+def create_party(request: PartyCreateRequest) -> dict[str, object]:
+    name = request.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Party name is required")
+    with connection() as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """SELECT id, name, short_name
+                     FROM parties
+                    WHERE end_date IS NULL AND LOWER(name) = LOWER(:name)
+                    ORDER BY id FETCH FIRST 1 ROW ONLY""",
+                {"name": name},
+            )
+            existing = cursor.fetchone()
+            if existing is not None:
+                return {"id": existing[0], "name": existing[1], "short_name": existing[2]}
+            party_var = cursor.var(int)
+            cursor.execute(
+                """INSERT INTO parties (name, short_name)
+                   VALUES (:name, :short_name)
+                   RETURNING id INTO :party_id""",
+                {"name": name, "short_name": request.short_name, "party_id": party_var},
+            )
+            party_id = int(party_var.getvalue()[0])
+            conn.commit()
+            return {"id": party_id, "name": name, "short_name": request.short_name}
         except Exception:
             conn.rollback()
             raise
@@ -518,6 +655,7 @@ def get_review(job_id: int) -> dict[str, object]:
             """SELECT id, version_type, version_number, status
                  FROM transcript_versions
                 WHERE process_id = :process_id AND end_date IS NULL
+                  AND version_type IN ('AUTOMATIC_DRAFT', 'REVIEWED_DRAFT')
                 ORDER BY CASE version_type WHEN 'REVIEWED_DRAFT' THEN 0 WHEN 'AUTOMATIC_DRAFT' THEN 1 ELSE 2 END,
                          version_number DESC""",
             {"process_id": job_id},
@@ -558,7 +696,7 @@ def get_review(job_id: int) -> dict[str, object]:
                       p.name, ss.start_second, ss.end_second, ss.confidence
                  FROM transcript_segment_speakers ss
                  JOIN transcript_participants tp ON tp.id = ss.transcript_participant_id
-                 LEFT JOIN participants p ON p.id = tp.participant_id
+                 LEFT JOIN participants_v p ON p.id = tp.participant_id
                 WHERE tp.transcript_version_id = :version_id
                   AND ss.end_date IS NULL AND tp.end_date IS NULL
                 ORDER BY ss.transcript_segment_id, ss.start_second, ss.id""",
@@ -1339,10 +1477,10 @@ async def get_participant_review(request: Request, job_id: int) -> dict[str, obj
         mapping_version_id = int(reviewed[0]) if reviewed else int(version[5])
         cursor.execute(
             """SELECT tp.id, tp.speaker_label, tp.participant_id, tp.role,
-                      tp.mapping_status, p.name
+                      tp.organisation, tp.occupation, tp.party_id, tp.party_name,
+                      tp.is_politician, tp.political_alignment, tp.mapping_status, p.name
                  FROM transcript_participants tp
-                 LEFT JOIN participants p
-                   ON p.id = tp.participant_id AND p.end_date IS NULL
+                 LEFT JOIN participants_v p ON p.id = tp.participant_id
                 WHERE tp.transcript_version_id = :version_id
                   AND tp.end_date IS NULL
                 ORDER BY tp.speaker_label""",
@@ -1405,8 +1543,14 @@ async def get_participant_review(request: Request, job_id: int) -> dict[str, obj
                     "speaker_label": row[1],
                     "participant_id": row[2],
                     "role": row[3],
-                    "mapping_status": row[4],
-                    "participant_name": row[5],
+                    "organisation": row[4],
+                    "occupation": row[5],
+                    "party_id": row[6],
+                    "party_name": row[7],
+                    "is_politician": row[8],
+                    "political_alignment": row[9],
+                    "mapping_status": row[10],
+                    "participant_name": row[11],
                     "samples": sample_by_label[row[1]],
                 }
                 for row in participants
@@ -1470,13 +1614,57 @@ def save_participant_review(job_id: int, request: ParticipantReviewRequest) -> d
                     raise HTTPException(status_code=422, detail=f"{mapping.speaker_label} requires participant_id")
                 if status != "CONFIRMED" and mapping.participant_id is not None:
                     raise HTTPException(status_code=422, detail=f"{mapping.speaker_label} cannot have participant_id for {status}")
+                if status != "CONFIRMED" and mapping.save_as_default:
+                    raise HTTPException(status_code=422, detail=f"{mapping.speaker_label} cannot update defaults without a participant")
+                if status != "CONFIRMED" and any((
+                    mapping.description, mapping.role, mapping.organisation, mapping.occupation, mapping.party_id,
+                    mapping.is_politician, mapping.political_alignment,
+                )):
+                    raise HTTPException(status_code=422, detail=f"{mapping.speaker_label} cannot have profile values for {status}")
                 if mapping.role is not None and len(mapping.role) > 120:
                     raise HTTPException(status_code=422, detail=f"{mapping.speaker_label} role is too long")
             for mapping in mappings.values():
                 if mapping.participant_id is not None:
-                    cursor.execute("SELECT 1 FROM participants WHERE id = :id AND end_date IS NULL", {"id": mapping.participant_id})
+                    cursor.execute("SELECT 1 FROM participants_v WHERE id = :id", {"id": mapping.participant_id})
                     if cursor.fetchone() is None:
                         raise HTTPException(status_code=422, detail=f"Participant not found: {mapping.participant_id}")
+            party_names = {
+                label: _require_party(cursor, mapping.party_id)
+                for label, mapping in mappings.items()
+                if mapping.mapping_status == "CONFIRMED"
+            }
+            default_updates: dict[int, object] = {}
+            for mapping in mappings.values():
+                if not mapping.save_as_default:
+                    continue
+                participant_id = int(mapping.participant_id)
+                if participant_id in default_updates:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="A participant default profile may be updated only once per save",
+                    )
+                default_updates[participant_id] = mapping
+            for participant_id, mapping in default_updates.items():
+                _replace_participant_details(cursor, participant_id, mapping)
+            descriptions: dict[int, str | None] = {}
+            for mapping in mappings.values():
+                if mapping.mapping_status != "CONFIRMED":
+                    continue
+                participant_id = int(mapping.participant_id)
+                previous = descriptions.get(participant_id, mapping.description)
+                if participant_id in descriptions and previous != mapping.description:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="A participant description may be changed only once per save",
+                    )
+                descriptions[participant_id] = mapping.description
+            for participant_id, description in descriptions.items():
+                cursor.execute(
+                    """UPDATE participants
+                          SET description = :description, last_updated = SYSTIMESTAMP
+                        WHERE id = :participant_id AND end_date IS NULL""",
+                    {"participant_id": participant_id, "description": description},
+                )
 
             cursor.execute(
                 """SELECT id, version_number
@@ -1506,25 +1694,35 @@ def save_participant_review(job_id: int, request: ParticipantReviewRequest) -> d
                 )
                 reviewed_version_id = int(version_var.getvalue()[0])
                 cursor.execute(
-                    """SELECT id, speaker_label, participant_id, role, mapping_status
+                    """SELECT id, speaker_label, participant_id, role, organisation, occupation,
+                              party_id, party_name, is_politician, political_alignment, mapping_status
                          FROM transcript_participants
                         WHERE transcript_version_id = :version_id AND end_date IS NULL
                         ORDER BY speaker_label""",
                     {"version_id": automatic_version_id},
                 )
                 participant_id_by_old_id: dict[int, int] = {}
-                for old_id, label, participant_id, role, mapping_status in cursor.fetchall():
+                for (old_id, label, participant_id, role, organisation, occupation,
+                     party_id, party_name, is_politician, political_alignment, mapping_status) in cursor.fetchall():
                     new_participant_var = cursor.var(int)
                     cursor.execute(
                         """INSERT INTO transcript_participants
-                           (transcript_version_id, speaker_label, participant_id, role, mapping_status)
-                           VALUES (:version_id, :speaker_label, :participant_id, :role, :mapping_status)
+                           (transcript_version_id, speaker_label, participant_id, role, organisation, occupation,
+                            party_id, party_name, is_politician, political_alignment, mapping_status)
+                           VALUES (:version_id, :speaker_label, :participant_id, :role, :organisation, :occupation,
+                                   :party_id, :party_name, :is_politician, :political_alignment, :mapping_status)
                            RETURNING id INTO :participant_id_out""",
                         {
                             "version_id": reviewed_version_id,
                             "speaker_label": label,
                             "participant_id": participant_id,
                             "role": role,
+                            "organisation": organisation,
+                            "occupation": occupation,
+                            "party_id": party_id,
+                            "party_name": party_name,
+                            "is_politician": is_politician,
+                            "political_alignment": political_alignment,
                             "mapping_status": mapping_status,
                             "participant_id_out": new_participant_var,
                         },
@@ -1590,16 +1788,29 @@ def save_participant_review(job_id: int, request: ParticipantReviewRequest) -> d
             )
             reviewed_participants = {row[1]: int(row[0]) for row in cursor.fetchall()}
             for label, mapping in mappings.items():
+                party_name = party_names.get(label)
                 cursor.execute(
                     """UPDATE transcript_participants
                           SET participant_id = :participant_id,
                               role = :role,
+                              organisation = :organisation,
+                              occupation = :occupation,
+                              party_id = :party_id,
+                              party_name = :party_name,
+                              is_politician = :is_politician,
+                              political_alignment = :political_alignment,
                               mapping_status = :mapping_status,
                               last_updated = SYSTIMESTAMP
                         WHERE id = :id AND end_date IS NULL""",
                     {
                         "participant_id": mapping.participant_id,
                         "role": mapping.role,
+                        "organisation": mapping.organisation,
+                        "occupation": mapping.occupation,
+                        "party_id": mapping.party_id,
+                        "party_name": party_name,
+                        "is_politician": mapping.is_politician,
+                        "political_alignment": mapping.political_alignment,
                         "mapping_status": mapping.mapping_status,
                         "id": reviewed_participants[label],
                     },
@@ -1717,16 +1928,27 @@ def finalize_job(job_id: int) -> dict[str, object]:
             )
             final_version_id = int(version_var.getvalue()[0])
 
-            cursor.execute("SELECT id, speaker_label, participant_id, role, mapping_status FROM transcript_participants WHERE transcript_version_id = :version_id AND end_date IS NULL ORDER BY id", {"version_id": reviewed_version_id})
+            cursor.execute("""SELECT id, speaker_label, participant_id, role, organisation, occupation,
+                                     party_id, party_name, is_politician, political_alignment, mapping_status
+                                FROM transcript_participants
+                               WHERE transcript_version_id = :version_id AND end_date IS NULL ORDER BY id""",
+                           {"version_id": reviewed_version_id})
             participant_map: dict[int, int] = {}
-            for old_id, label, participant_id, role, mapping_status in cursor.fetchall():
+            for (old_id, label, participant_id, role, organisation, occupation,
+                 party_id, party_name, is_politician, political_alignment, mapping_status) in cursor.fetchall():
                 out = cursor.var(int)
                 cursor.execute(
                     """INSERT INTO transcript_participants
-                       (transcript_version_id, speaker_label, participant_id, role, mapping_status)
-                       VALUES (:version_id, :label, :participant_id, :role, :mapping_status)
+                       (transcript_version_id, speaker_label, participant_id, role, organisation, occupation,
+                        party_id, party_name, is_politician, political_alignment, mapping_status)
+                       VALUES (:version_id, :label, :participant_id, :role, :organisation, :occupation,
+                               :party_id, :party_name, :is_politician, :political_alignment, :mapping_status)
                        RETURNING id INTO :new_id""",
-                    {"version_id": final_version_id, "label": label, "participant_id": participant_id, "role": role, "mapping_status": mapping_status, "new_id": out},
+                    {"version_id": final_version_id, "label": label, "participant_id": participant_id,
+                     "role": role, "organisation": organisation, "occupation": occupation,
+                     "party_id": party_id, "party_name": party_name,
+                     "is_politician": is_politician, "political_alignment": political_alignment,
+                     "mapping_status": mapping_status, "new_id": out},
                 )
                 participant_map[int(old_id)] = int(out.getvalue()[0])
 
@@ -1883,7 +2105,7 @@ def _render_transcript_version(cursor, version_id: int, version_type: str) -> tu
              FROM transcript_segments s
              LEFT JOIN transcript_segment_speakers ss ON ss.transcript_segment_id = s.id AND ss.end_date IS NULL
              LEFT JOIN transcript_participants tp ON tp.id = ss.transcript_participant_id AND tp.end_date IS NULL
-             LEFT JOIN participants p ON p.id = tp.participant_id AND p.end_date IS NULL
+             LEFT JOIN participants_v p ON p.id = tp.participant_id
             WHERE s.transcript_version_id = :version_id AND s.end_date IS NULL
             ORDER BY s.segment_number, s.id, ss.id""", {"version_id": version_id})
     segments: list[dict[str, object]] = []
@@ -1958,8 +2180,7 @@ def _regenerate_reviewed_artifacts(process_id: int, version_id: int | None = Non
                        ON ss.transcript_segment_id = s.id AND ss.end_date IS NULL
                      LEFT JOIN transcript_participants tp
                        ON tp.id = ss.transcript_participant_id AND tp.end_date IS NULL
-                     LEFT JOIN participants p
-                       ON p.id = tp.participant_id AND p.end_date IS NULL
+                     LEFT JOIN participants_v p ON p.id = tp.participant_id
                     WHERE s.transcript_version_id = :version_id AND s.end_date IS NULL
                     ORDER BY s.segment_number, s.id, ss.id""",
                 {"version_id": version_id},
