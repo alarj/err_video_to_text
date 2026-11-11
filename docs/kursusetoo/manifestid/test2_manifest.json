@@ -1,0 +1,179 @@
+{
+  "cohort_date": "2026-10-20",
+  "features": [
+    "duration_s",
+    "words",
+    "show_speaker_count",
+    "candidate_type",
+    "internal_speaker_change_count",
+    "distinct_speaker_count",
+    "dominant_speaker_coverage",
+    "nearest_change_edge_ratio"
+  ],
+  "rows": 337,
+  "processes": [
+    33,
+    43,
+    79,
+    80,
+    83,
+    89,
+    91,
+    94,
+    102,
+    103,
+    104,
+    105,
+    107,
+    108
+  ],
+  "labels": {
+    "ACCEPTED": 62,
+    "MODIFIED": 151,
+    "REJECTED": 124
+  },
+  "sha256": "f96dd98818797d8523cf87c4c4d658c989b7b0e91287f91fbfa82214a04bc183",
+  "training_sha256": "4a7e4dbbbf8c760e10ae49f9cc2b0d77de96fa0ee517731053486d64328c9095",
+  "artifacts": {
+    "33": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-33/speakers.json",
+        "sha256": "f4f86b3c6ff4eed6bdb83899b0e8fa5034ad49a8f7c5220ac08c553c9184ac9c"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-33/transcript.json",
+        "sha256": "3ae90b60350bdcff7fcb0553629df6b0a583a92818d061e892843b80cd3f5f97"
+      }
+    },
+    "43": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-43/speakers.json",
+        "sha256": "703ea34a27302ec8b7718a15584b7bccfa01e4f4f681a32f30e4c03ddc94be0a"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-43/transcript.json",
+        "sha256": "eb084b09c7cde733deb88ba50e9768fd41d6641f4ea13687d8109e4d4a071c07"
+      }
+    },
+    "79": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-79/speakers.json",
+        "sha256": "6ad230aaced12190d6ee97c4aadb038476ef318f883b84d6cfa9cb5563b378ca"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-79/transcript.json",
+        "sha256": "65a0f28c48b1d87378c2fc09a2662f3f5a5bde2db48438f6a06bee1d1bbe941c"
+      }
+    },
+    "80": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-80/speakers.json",
+        "sha256": "ec521ba808028d04113d6ee50ded47cdc63c809423332cac540e9b317b467bc3"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-80/transcript.json",
+        "sha256": "de51e4e443fca6d6fbe3403175bca8a62f98b3b9f823f31188420b1a458b5e59"
+      }
+    },
+    "83": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-83/speakers.json",
+        "sha256": "a33de7a88cd49f32825adf703611d9122e4b0d6fae4b2399c3ee0d5834e81268"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-83/transcript.json",
+        "sha256": "ebd6c581a438abdee93ba3fd800899fd094f252e5e0b6c2ce991073636aebf81"
+      }
+    },
+    "89": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-89/speakers.json",
+        "sha256": "e8e69812e66b297f645f5a2f0aae6d28944bba760f4615538ce95f83d95cbbd2"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-89/transcript.json",
+        "sha256": "6a4946998ca0feba4f7555852ad2dd7861fa8535d31bb234219f6a7766a2fadd"
+      }
+    },
+    "91": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-91/speakers.json",
+        "sha256": "1643697e0a8d2dc72d2fcbe982b83a1f76f18811d650971aabdddddc26927fb7"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-91/transcript.json",
+        "sha256": "ad767a614f5d01fef2c80426a81d47e4821deb9eea69414c16e5c5f4e410fd1b"
+      }
+    },
+    "94": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-94/speakers.json",
+        "sha256": "77d906e27bd0efe8f70bc86cd0b4ee4885ce77b423536740d90f6e12527db254"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-94/transcript.json",
+        "sha256": "55f3ba30a0ac7331948e04441a6a59e3137290928d62e2a6f671424c567ee515"
+      }
+    },
+    "102": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-102/speakers.json",
+        "sha256": "c0fb0a21f48e097cc4b8f6304082ab439433c66dac043d2a1235ebf96586e5a6"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-102/transcript.json",
+        "sha256": "9d05a44fd7bce3744371e76b6bdbed99ce2f3863ee325da15aa7e39795696b14"
+      }
+    },
+    "103": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-103/speakers.json",
+        "sha256": "75f22aae7fb99e8eb7205402c32cb42db8dabf5385946f89f827c22df4cf375d"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-103/transcript.json",
+        "sha256": "046fa5ce6d5dfe1513e448054b273ea3eab12b325eb024c163655b2f065fa28a"
+      }
+    },
+    "104": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-104/speakers.json",
+        "sha256": "464193cd212831eba7e3e89642ad0eb4ab3dfc52def8c44d914a3a920b7c0cae"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-104/transcript.json",
+        "sha256": "9a533235023119d2d514163cf40b46657998bc5aa2e4eac17d35be9933b676ce"
+      }
+    },
+    "105": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-105/speakers.json",
+        "sha256": "15e24e360e9e004200b692efc5deee8778956de21cb43679fbd57000f9a35840"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-105/transcript.json",
+        "sha256": "fb5753dd3c2a3a4656da3c325249ad75e39ada88e3327577bacb0d78b53862fb"
+      }
+    },
+    "107": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-107/speakers.json",
+        "sha256": "874767e973e2060885a676e3f5592208581209020e94486b9e91f6385a50eabb"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-107/transcript.json",
+        "sha256": "7295719fed747d41900d6ac40017a1b8d6700b89edb9b239ca8bbaaa3e981859"
+      }
+    },
+    "108": {
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-108/transcript.json",
+        "sha256": "b6e0062facdad2a54f38d1ea72dde8f71e038e1e703bdbcb62041097cb0eb564"
+      },
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-108/speakers.json",
+        "sha256": "6bfc74c577c8a11ec534868127ab87563dd1519f090ed1f7e3f1138baebaf6ff"
+      }
+    }
+  }
+}

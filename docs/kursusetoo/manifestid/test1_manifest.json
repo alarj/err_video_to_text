@@ -1,0 +1,190 @@
+{
+  "cohort_date": "2026-10-19",
+  "features": [
+    "duration_s",
+    "words",
+    "show_speaker_count",
+    "candidate_type",
+    "internal_speaker_change_count",
+    "distinct_speaker_count",
+    "dominant_speaker_coverage",
+    "nearest_change_edge_ratio"
+  ],
+  "artifacts": {
+    "14": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-14/speakers.json",
+        "sha256": "b92de4701af1d0a512a588389bcb14302de725742a3cb82531b17f458fe79e81"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-14/transcript.json",
+        "sha256": "7ef58aebb9e0334892cea7076e2c8aecfc2727a5cea7d8a91459a245706e21a7"
+      }
+    },
+    "15": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-15/speakers.json",
+        "sha256": "40de40c4cd993b2f3902f9218db7066f25382425a79fd82cfd8b4cc4aa99c450"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-15/transcript.json",
+        "sha256": "90df9ca93bed30f2c62874609028a9efe6bd95a86da10b75212b1e51ba5d230d"
+      }
+    },
+    "16": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-16/speakers.json",
+        "sha256": "47c8c517b0b4f1fbd58e97e3986944af1847c0d979d42bdc3086487d000d1e52"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-16/transcript.json",
+        "sha256": "4283061cef2f6b5c5343201f7009834f6b7009ac272308ee2f7e2bbd55f2f98d"
+      }
+    },
+    "18": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-18/speakers.json",
+        "sha256": "662254da848cdb33c16349f1a252851eee20828ded8125e55349bb964029a1b9"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-18/transcript.json",
+        "sha256": "01acf22686656ebecd4b10b6d62eb94e45d1bef19239a1ef168784d5e190159f"
+      }
+    },
+    "19": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-19/speakers.json",
+        "sha256": "8d9744ee7c67e71c67424859737af40077e02c797a29ccea0ab71cadf020af45"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-19/transcript.json",
+        "sha256": "574d5dd97a8c2c52f00ab717a7bc1ae219a0fbde7e8d7649cdd321bd48085f03"
+      }
+    },
+    "20": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-20/speakers.json",
+        "sha256": "de7b1f92d94dfdc5073039e5fbfabf8f636bbf5edb94b8106d4fba9bfa08fa30"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-20/transcript.json",
+        "sha256": "de3bc6ff4ffe11fd495dcc6ac60f680a31c0d9e8d21755907eb5668f4f978f26"
+      }
+    },
+    "21": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-21/speakers.json",
+        "sha256": "2d54d4eb42323200be2918068c3404ee412869ea6aae7a9ad122de5562c3005f"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-21/transcript.json",
+        "sha256": "b8942b3d86c9fbda570bdc66090de86c567c85d7d983dcd652e2c7cefff7df23"
+      }
+    },
+    "22": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-22/speakers.json",
+        "sha256": "ae17f6e270bd188650688d0fd9750e9835e4ef7d9827cf3cf178689ca29f25c2"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-22/transcript.json",
+        "sha256": "7e688c0c4889b4e0a615c0c37870f6a2984d0d7e34655cd52e65fbebce23eee5"
+      }
+    },
+    "23": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-23/speakers.json",
+        "sha256": "8e7c22403cecc51e9bc604a725b50578a6eff3ca18711e1657ecc6f6b6282e4d"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-23/transcript.json",
+        "sha256": "839f3a8efd57f0b76102c31559361591a03e14f2394dd0138793fed5133960bd"
+      }
+    },
+    "24": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-24/speakers.json",
+        "sha256": "e095fd7c11062123d1a648464abf6c7d012072fda604e844b0e047bf3dedd396"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-24/transcript.json",
+        "sha256": "dd546d1e788ee7573362ec49ad0bcd7ade78d447b1fc6ba8dd56837693720246"
+      }
+    },
+    "25": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-25/speakers.json",
+        "sha256": "c55d5b925cc110d118acfc8bab36e51fb22bfcdc070cfa24a22fd06654d59214"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-25/transcript.json",
+        "sha256": "a96a6820c389d27f2734e4fda521a959170baf961ccfe421029607c7c780dfa6"
+      }
+    },
+    "26": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-26/speakers.json",
+        "sha256": "53a61425b9070dc4ad7a2ceebaf8e512fd9bd249116100c330790065a360e142"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-26/transcript.json",
+        "sha256": "f1bc855cf8389fb89ab53be692202fc6a5c9b59d6722dad97f722f941b216098"
+      }
+    },
+    "27": {
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-27/transcript.json",
+        "sha256": "0b1b4b1404b8f647af1d10d81c9333f011773b10c91bdc811f8a5845a61a3117"
+      },
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-27/speakers.json",
+        "sha256": "899c871b5eaa90dc3234be4004fd0db2a9d16ae80415c8eab6c3392d7281cf0b"
+      }
+    },
+    "28": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-28/speakers.json",
+        "sha256": "bc3a83936ec72abd577124ee02705dd1a6dc969a249712660c3377b712c7d148"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-28/transcript.json",
+        "sha256": "a48ba31dc13c3321a64989e7f483cac3e21bb59f785cf37fb0c3e864a0f13153"
+      }
+    },
+    "29": {
+      "DIARIZATION_JSON": {
+        "path": "/runtime/outputs/process-29/speakers.json",
+        "sha256": "cdeae4b849be39524a81e2d30013ef2fdde4c458dccd321469246d78e847ded4"
+      },
+      "AUTOMATIC_TRANSCRIPT_JSON": {
+        "path": "/runtime/outputs/process-29/transcript.json",
+        "sha256": "9b93280ae617d192b1aab64a5f4f2dca42e26ab6e1bff8feb3bdc0687d7729df"
+      }
+    }
+  },
+  "rows": 488,
+  "processes": [
+    14,
+    15,
+    16,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29
+  ],
+  "labels": {
+    "MODIFIED": 107,
+    "REJECTED": 91,
+    "ACCEPTED": 290
+  },
+  "sha256": "de55ad11a8236782ef286e2876c0ba32d1cf9a145377ea3afe0c7d1e0ff08c7e",
+  "training_sha256": "4a7e4dbbbf8c760e10ae49f9cc2b0d77de96fa0ee517731053486d64328c9095"
+}

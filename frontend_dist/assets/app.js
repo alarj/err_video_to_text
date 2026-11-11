@@ -22,7 +22,7 @@ const state = {
 const $ = (selector) => document.querySelector(selector);
 
 async function loadTranslations() {
-  const response = await fetch("./assets/i18n/et.json?v=5");
+  const response = await fetch("./assets/i18n/et.json?v=6");
   if (!response.ok) throw new Error("Translations could not be loaded");
   state.translations = await response.json();
   document.querySelectorAll("[data-i18n]").forEach((element) => {
@@ -279,16 +279,46 @@ function participantMapping(card) {
   const input = card.querySelector(".participant-input");
   const unknown = isUnknownParticipantInput(input);
   const value = normalizeParticipantName(input.value);
+  const partyInput = card.querySelector(".participant-party");
+  const mappingStatus = unknown ? "UNKNOWN" : value ? "CONFIRMED" : "UNCONFIRMED";
   return {
     speaker_label: card.dataset.speakerLabel,
     participant_id: value && !unknown ? Number(input.dataset.participantId || 0) || null : null,
-    role: card.querySelector(".participant-role").value.trim() || null,
+    role: mappingStatus === "CONFIRMED" ? card.querySelector(".participant-role").value.trim() || null : null,
     participant_name: value,
-    description: card.querySelector(".participant-description").value.trim() || null,
-    organisation: card.querySelector(".participant-organisation").value.trim() || null,
-    occupation: card.querySelector(".participant-occupation").value.trim() || null,
-    mapping_status: unknown ? "UNKNOWN" : value ? "CONFIRMED" : "UNCONFIRMED",
+    organisation: mappingStatus === "CONFIRMED" ? card.querySelector(".participant-organisation").value.trim() || null : null,
+    occupation: mappingStatus === "CONFIRMED" ? card.querySelector(".participant-occupation").value.trim() || null : null,
+    party_id: mappingStatus === "CONFIRMED" && partyInput.value.trim() ? Number(partyInput.dataset.partyId || 0) || null : null,
+    party_name: mappingStatus === "CONFIRMED" ? partyInput.value.trim() || null : null,
+    is_politician: mappingStatus === "CONFIRMED" ? (card.querySelector(".participant-politician").checked ? "JAH" : "EI") : null,
+    political_alignment: mappingStatus === "CONFIRMED" ? card.querySelector(".participant-alignment").value || null : null,
+    description: mappingStatus === "CONFIRMED" ? card.querySelector(".participant-description")?.value.trim() || null : null,
+    save_as_default: false,
+    mapping_status: mappingStatus,
   };
+}
+
+const PARTICIPANT_DEFAULT_FIELDS = [
+  "organisation",
+  "occupation",
+  "role",
+  "party_id",
+  "is_politician",
+  "political_alignment",
+];
+
+function participantDefaultValues(mapping) {
+  return Object.fromEntries(PARTICIPANT_DEFAULT_FIELDS.map((field) => [field, mapping[field] ?? null]));
+}
+
+function participantProfileChangedSinceOpen(card, mapping) {
+  let initial;
+  try {
+    initial = JSON.parse(card.dataset.initialParticipantDefaults || "{}");
+  } catch (_) {
+    initial = {};
+  }
+  return PARTICIPANT_DEFAULT_FIELDS.some((field) => String(mapping[field] ?? "") !== String(initial[field] ?? ""));
 }
 
 function isUnknownParticipantInput(input) {
@@ -316,26 +346,108 @@ function addParticipantToAllLists(participant) {
   document.querySelectorAll(".participant-options").forEach((list) => addParticipantOption(list, participant));
 }
 
+function addPartyOption(list, party) {
+  const existing = [...list.options].find((option) => option.dataset.partyId === String(party.id));
+  if (existing) return;
+  const option = document.createElement("option");
+  option.value = party.name;
+  option.dataset.partyId = String(party.id);
+  option.textContent = party.name;
+  list.appendChild(option);
+}
+
+function addPartyToAllLists(party) {
+  document.querySelectorAll(".party-options").forEach((list) => addPartyOption(list, party));
+}
+
 function participantByInput(input) {
+  const participantId = Number(input.dataset.participantId || 0);
+  if (participantId) {
+    return state.participantReview?.participants.find((participant) => participant.id === participantId) || null;
+  }
   const name = input.value.trim().toLocaleLowerCase();
   return state.participantReview?.participants.find((participant) => participant.name.trim().toLocaleLowerCase() === name) || null;
 }
 
-function updateParticipantDetails(card) {
+function cacheParticipants(participants) {
+  if (!state.participantReview) return;
+  participants.forEach((participant) => {
+    const index = state.participantReview.participants.findIndex((item) => item.id === participant.id);
+    if (index === -1) state.participantReview.participants.push(participant);
+    else state.participantReview.participants[index] = participant;
+  });
+}
+
+async function searchParticipants(input, list) {
+  const query = input.value.trim();
+  if (!query || isUnknownParticipantInput(input)) return;
+  const matches = await request(`/participants?query=${encodeURIComponent(query)}&limit=20`);
+  if (input.value.trim() !== query) return;
+  cacheParticipants(matches);
+  [...list.options].forEach((option) => {
+    if (option.dataset.participantId) option.remove();
+  });
+  matches.forEach((participant) => addParticipantOption(list, participant));
+  const match = participantByInput(input);
+  if (match) input.dataset.participantId = String(match.id);
+  updateParticipantDetails(input.closest(".speaker-review-card"));
+}
+
+function partyByInput(input) {
+  const name = input.value.trim().toLocaleLowerCase();
+  return state.participantReview?.parties.find((party) => party.name.trim().toLocaleLowerCase() === name) || null;
+}
+
+function fillParticipantProfile(card, participant) {
+  card.querySelector(".participant-description").value = participant?.description || "";
+  card.querySelector(".participant-organisation").value = participant?.organisation || "";
+  card.querySelector(".participant-occupation").value = participant?.occupation || "";
+  card.querySelector(".participant-role").value = participant?.role || "";
+  const partyInput = card.querySelector(".participant-party");
+  partyInput.value = participant?.party_name || "";
+  partyInput.dataset.partyId = participant?.party_id == null ? "" : String(participant.party_id);
+  const politician = card.querySelector(".participant-politician");
+  politician.checked = participant?.is_politician === "JAH";
+  card.querySelector(".participant-politician-state").textContent = translate(
+    politician.checked ? "participants.politician_yes" : "participants.politician_no",
+  );
+  card.querySelector(".participant-alignment").value = participant?.political_alignment || "NONE";
+}
+
+function confirmParticipantDefaults(name) {
+  const dialog = $("#participantDefaultsConfirm");
+  const participantDialog = $("#participantReviewViewer");
+  const defaultButton = $("#participantDefaultsConfirmDefault");
+  const snapshotButton = $("#participantDefaultsConfirmSnapshot");
+  $("#participantDefaultsConfirmMessage").textContent = translate("participants.save_default_confirm").replace("{name}", name);
+  participantDialog.inert = true;
+  dialog.showModal();
+  return new Promise((resolve) => {
+    const finish = (saveAsDefault) => {
+      defaultButton.removeEventListener("click", saveDefault);
+      snapshotButton.removeEventListener("click", saveSnapshot);
+      dialog.close();
+      participantDialog.inert = false;
+      $("#participantReviewSave").focus();
+      resolve(saveAsDefault);
+    };
+    const saveDefault = () => finish(true);
+    const saveSnapshot = () => finish(false);
+    defaultButton.addEventListener("click", saveDefault);
+    snapshotButton.addEventListener("click", saveSnapshot);
+  });
+}
+
+function updateParticipantDetails(card, loadDefaults = true) {
   const input = card.querySelector(".participant-input");
   const unknown = isUnknownParticipantInput(input);
   const participant = !unknown ? participantByInput(input) : null;
-  const editFields = card.querySelector(".participant-new-details");
-  const existingDetails = card.querySelector(".participant-existing-details");
-  if (!participant) {
-    editFields.querySelectorAll("input, textarea").forEach((field) => { field.value = ""; });
-  }
-  editFields.classList.toggle("hidden", Boolean(participant) || unknown || !input.value.trim());
-  existingDetails.classList.toggle("hidden", !participant || unknown);
+  const profileFields = card.querySelector(".participant-profile-details");
+  profileFields.classList.toggle("hidden", unknown || !input.value.trim());
   if (participant) {
-    existingDetails.querySelector("[data-detail=description]").textContent = participant.description || "—";
-    existingDetails.querySelector("[data-detail=organisation]").textContent = participant.organisation || "—";
-    existingDetails.querySelector("[data-detail=occupation]").textContent = participant.occupation || "—";
+    if (loadDefaults) fillParticipantProfile(card, participant);
+  } else if (!unknown && input.value.trim() && loadDefaults) {
+    fillParticipantProfile(card, null);
   }
 }
 
@@ -367,9 +479,9 @@ function renderParticipantReview(data, participants) {
     const unknownOption = document.createElement("option");
     unknownOption.value = translate("participants.unknown");
     list.appendChild(unknownOption);
-    participants.forEach((participant) => addParticipantOption(list, participant));
     if (speaker.participant_id != null) {
-      addParticipantOption(list, {
+      const participant = participants.find((item) => item.id === speaker.participant_id);
+      addParticipantOption(list, participant || {
         id: speaker.participant_id,
         name: speaker.participant_name || `#${speaker.participant_id}`,
       });
@@ -391,11 +503,17 @@ function renderParticipantReview(data, participants) {
       input.dispatchEvent(new Event("input"));
       input.focus();
     });
+    let participantSearchTimer = null;
     input.addEventListener("input", () => {
       const match = [...list.options].find((option) => option.value.trim().toLocaleLowerCase() === input.value.trim().toLocaleLowerCase());
       input.dataset.participantId = match?.dataset.participantId || "";
       if (match && !match.dataset.participantId) input.value = match.value;
       updateParticipantDetails(card);
+      if (match?.dataset.participantId || isUnknownParticipantInput(input)) return;
+      clearTimeout(participantSearchTimer);
+      participantSearchTimer = setTimeout(() => {
+        searchParticipants(input, list).catch(() => {});
+      }, 250);
     });
     input.addEventListener("blur", () => {
       input.value = normalizeParticipantName(input.value);
@@ -403,41 +521,81 @@ function renderParticipantReview(data, participants) {
     });
     inputRow.append(input, clearInput);
     selectLabel.append(inputRow, list);
-    const participantDetails = [
-      ["description", "participants.description", 4000],
-      ["organisation", "participants.organisation", 500],
-      ["occupation", "participants.occupation", 500],
-    ];
-    const existingDetails = document.createElement("div");
-    existingDetails.className = "participant-existing-details hidden";
-    participantDetails.forEach(([field, labelKey]) => {
-      const line = document.createElement("div");
-      line.className = "participant-existing-detail";
-      line.innerHTML = `<span>${translate(labelKey)}</span><strong data-detail="${field}">—</strong>`;
-      existingDetails.appendChild(line);
-    });
-    const newDetails = document.createElement("div");
-    newDetails.className = "participant-new-details hidden";
-    const detailLabels = participantDetails.map(([field, labelKey, maxLength]) => {
+    const profileDetails = document.createElement("div");
+    profileDetails.className = "participant-profile-details hidden";
+    const profileDescriptionLabel = document.createElement("label");
+    profileDescriptionLabel.textContent = translate("participants.description");
+    const profileDescription = document.createElement("textarea");
+    profileDescription.className = "participant-description";
+    profileDescription.maxLength = 4000;
+    profileDescription.rows = 2;
+    profileDescriptionLabel.appendChild(profileDescription);
+    const makeTextField = (field, labelKey, maxLength) => {
       const label = document.createElement("label");
       label.textContent = translate(labelKey);
-      const detail = document.createElement(field === "description" ? "textarea" : "input");
+      const detail = document.createElement("input");
       detail.className = `participant-${field}`;
+      detail.type = "text";
       detail.maxLength = maxLength;
-      detail.rows = field === "description" ? 2 : undefined;
       label.appendChild(detail);
       return label;
+    };
+    const organisationLabel = makeTextField("organisation", "participants.organisation", 500);
+    const occupationLabel = makeTextField("occupation", "participants.occupation", 500);
+    const roleLabel = makeTextField("role", "participants.role", 120);
+    const partyLabel = document.createElement("label");
+    partyLabel.textContent = translate("participants.party");
+    const partyInput = document.createElement("input");
+    partyInput.className = "participant-party";
+    partyInput.type = "text";
+    partyInput.maxLength = 500;
+    partyInput.placeholder = translate("participants.party_placeholder");
+    const partyList = document.createElement("datalist");
+    partyList.id = `party-options-${speaker.speaker_label}`;
+    partyList.className = "party-options";
+    state.participantReview?.parties?.forEach((party) => addPartyOption(partyList, party));
+    partyInput.setAttribute("list", partyList.id);
+    partyInput.addEventListener("input", () => {
+      const party = partyByInput(partyInput);
+      partyInput.dataset.partyId = party ? String(party.id) : "";
     });
-    newDetails.append(...detailLabels);
-    const roleLabel = document.createElement("label");
-    roleLabel.textContent = translate("participants.role");
-    const role = document.createElement("input");
-    role.className = "participant-role";
-    role.type = "text";
-    role.maxLength = 120;
-    role.value = speaker.role || "";
-    roleLabel.appendChild(role);
-    mapping.append(selectLabel, existingDetails, newDetails, roleLabel);
+    partyLabel.append(partyInput, partyList);
+    const politicianField = document.createElement("div");
+    politicianField.className = "participant-politician-field";
+    const politicianTitle = document.createElement("span");
+    politicianTitle.className = "participant-field-label";
+    politicianTitle.textContent = translate("participants.is_politician");
+    const politicianLabel = document.createElement("label");
+    politicianLabel.className = "participant-switch";
+    const politician = document.createElement("input");
+    politician.type = "checkbox";
+    politician.setAttribute("role", "switch");
+    politician.className = "participant-politician";
+    const politicianSlider = document.createElement("span");
+    politicianSlider.className = "participant-switch-slider";
+    politicianSlider.setAttribute("aria-hidden", "true");
+    const politicianState = document.createElement("span");
+    politicianState.className = "participant-politician-state";
+    politician.addEventListener("change", () => {
+      politicianState.textContent = translate(
+        politician.checked ? "participants.politician_yes" : "participants.politician_no",
+      );
+    });
+    politicianLabel.append(politician, politicianSlider, politicianState);
+    politicianField.append(politicianTitle, politicianLabel);
+    const alignmentLabel = document.createElement("label");
+    alignmentLabel.textContent = translate("participants.political_alignment");
+    const alignment = document.createElement("select");
+    alignment.className = "participant-alignment";
+    [["NONE", "participants.alignment_none"], ["KOALITSIOON", "participants.alignment_coalition"], ["OPOSITSIOON", "participants.alignment_opposition"]].forEach(([value, key]) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = translate(key);
+      alignment.appendChild(option);
+    });
+    alignmentLabel.appendChild(alignment);
+    profileDetails.append(profileDescriptionLabel, organisationLabel, occupationLabel, roleLabel, partyLabel, politicianField, alignmentLabel);
+    mapping.append(selectLabel, profileDetails);
     const samples = document.createElement("div");
     samples.className = "speaker-samples";
     const video = document.createElement("video");
@@ -469,7 +627,11 @@ function renderParticipantReview(data, participants) {
     samples.appendChild(sampleButtons);
     card.append(heading, mapping, samples);
     container.appendChild(card);
-    updateParticipantDetails(card);
+    fillParticipantProfile(card, speaker);
+    const currentParticipant = participantByInput(input);
+    if (currentParticipant) card.querySelector(".participant-description").value = currentParticipant.description || "";
+    updateParticipantDetails(card, false);
+    card.dataset.initialParticipantDefaults = JSON.stringify(participantDefaultValues(participantMapping(card)));
     state.participantPlayers.set(speaker.speaker_label, participantVideo(video, playerMessage, data.media.url));
   });
 }
@@ -491,12 +653,19 @@ async function showParticipantReview(jobId) {
   content.replaceChildren();
   dialog.showModal();
   try {
-    const [data, participants] = await Promise.all([
+    const [data, parties] = await Promise.all([
       request(`/jobs/${jobId}/participant-review`),
-      request("/participants"),
+      request("/parties"),
     ]);
+    const participantIds = [...new Set(data.speakers
+      .map((speaker) => speaker.participant_id)
+      .filter((participantId) => participantId != null))];
+    const participants = await Promise.all(
+      participantIds.map((participantId) => request(`/participants/${participantId}`)),
+    );
     state.participantReview.data = data;
     state.participantReview.participants = participants;
+    state.participantReview.parties = parties;
     renderParticipantReview(data, participants);
     message.textContent = "";
   } catch (error) {
@@ -509,9 +678,19 @@ async function saveParticipantReview() {
   const saveButton = $("#participantReviewSave");
   saveButton.disabled = true;
   try {
-  const mappings = [...document.querySelectorAll(".speaker-review-card")].map(participantMapping);
+  const cards = [...document.querySelectorAll(".speaker-review-card")];
+  const mappings = cards.map(participantMapping);
   for (const mapping of mappings) {
     if (mapping.mapping_status !== "CONFIRMED" || mapping.participant_id) continue;
+    if (mapping.party_name && !mapping.party_id) {
+      const party = await request("/parties", {
+        method: "POST",
+        body: JSON.stringify({ name: mapping.party_name }),
+      });
+      mapping.party_id = party.id;
+      state.participantReview.parties.push(party);
+      addPartyToAllLists(party);
+    }
     const existing = state.participantReview.participants.find((participant) => participant.name.trim().toLocaleLowerCase() === mapping.participant_name.trim().toLocaleLowerCase());
     const participant = existing || await request("/participants", {
       method: "POST",
@@ -520,6 +699,10 @@ async function saveParticipantReview() {
         description: mapping.description,
         organisation: mapping.organisation,
         occupation: mapping.occupation,
+        role: mapping.role,
+        party_id: mapping.party_id,
+        is_politician: mapping.is_politician,
+        political_alignment: mapping.political_alignment,
       }),
     });
     if (!existing) {
@@ -528,10 +711,32 @@ async function saveParticipantReview() {
     }
     mapping.participant_id = participant.id;
   }
+  for (const [index, mapping] of mappings.entries()) {
+    if (mapping.mapping_status !== "CONFIRMED") continue;
+    if (mapping.party_name && !mapping.party_id) {
+      const party = await request("/parties", {
+        method: "POST",
+        body: JSON.stringify({ name: mapping.party_name }),
+      });
+      mapping.party_id = party.id;
+      state.participantReview.parties.push(party);
+      addPartyToAllLists(party);
+    }
+    const participant = state.participantReview.participants.find((item) => item.id === mapping.participant_id);
+    if (!participant) continue;
+    const changed = ["organisation", "occupation", "role", "party_id", "is_politician", "political_alignment"]
+      .some((field) => String(mapping[field] ?? "") !== String(participant[field] ?? ""));
+    if (changed && participantProfileChangedSinceOpen(cards[index], mapping)) {
+      mapping.save_as_default = await confirmParticipantDefaults(participant.name);
+    }
+  }
   const unresolved = mappings.filter((mapping) => mapping.mapping_status === "UNCONFIRMED");
     const result = await request(`/jobs/${state.participantReview.jobId}/participant-review`, {
       method: "PUT",
       body: JSON.stringify({ mappings, confirm: unresolved.length === 0 }),
+    });
+    document.querySelectorAll(".speaker-review-card").forEach((card) => {
+      card.dataset.initialParticipantDefaults = JSON.stringify(participantDefaultValues(participantMapping(card)));
     });
     $("#participantReviewMessage").textContent = result.unresolved_labels?.length
       ? `${translate("participants.saved_partial")}: ${result.unresolved_labels.join(", ")}`
@@ -1246,6 +1451,11 @@ function artifactDisplayName(artifact) {
   const type = String(artifact.artifact_type || "").toUpperCase();
   if (type === "REVIEWED_TRANSCRIPT_MARKDOWN" || type === "REVIEWED_DRAFT_MD") return translate("artifacts.transcript");
   if (type === "AUTOMATIC_TRANSCRIPT_MARKDOWN") return translate("artifacts.transcript_automatic");
+  if (type === "JUTUSTA_EE_TRANSCRIPT_MARKDOWN") return translate("artifacts.transcript_jutusta_ee");
+  if (type === "JUTUSTA_EE_COMPARISON_MARKDOWN") return translate("artifacts.comparison_jutusta_ee");
+  if (type === "JUTUSTA_EE_COMPARISON_JSON") return `${translate("artifacts.comparison_jutusta_ee")} (JSON)`;
+  if (type === "JUTUSTA_EE_SOURCE_JSON" || type === "JUTUSTA_EE_SOURCE_TEXT") return `${translate("artifacts.source_jutusta_ee")} (${type.endsWith("JSON") ? "JSON" : "TXT"})`;
+  if (type === "JUTUSTA_EE_RUN_METADATA_JSON") return translate("artifacts.metadata_jutusta_ee");
   if (category === "MD") return `${translate("artifacts.transcript_version")} #${artifact.id}`;
   if (category === "VTT") return translate("artifacts.vtt");
   return `${artifact.artifact_type} (${artifact.size_byte} B)`;
@@ -1253,6 +1463,13 @@ function artifactDisplayName(artifact) {
 
 function artifactDownloadName(artifact) {
   const category = artifactCategory(artifact);
+  const type = String(artifact.artifact_type || "").toUpperCase();
+  if (type === "JUTUSTA_EE_TRANSCRIPT_MARKDOWN") return "jutusta-ee-transkriptsioon.md";
+  if (type === "JUTUSTA_EE_COMPARISON_MARKDOWN") return "jutusta-ee-vordlus.md";
+  if (type === "JUTUSTA_EE_COMPARISON_JSON") return "jutusta-ee-vordlus.json";
+  if (type === "JUTUSTA_EE_SOURCE_JSON") return "jutusta-ee-lahtevaljund.json";
+  if (type === "JUTUSTA_EE_SOURCE_TEXT") return "jutusta-ee-lahtevaljund.txt";
+  if (type === "JUTUSTA_EE_RUN_METADATA_JSON") return "jutusta-ee-metaandmed.json";
   if (category === "VTT") return "saate-subtiitrid.vtt";
   if (category === "MD") return "transkriptsioon.md";
   const extension = String(artifact.artifact_type || "json").toLowerCase().split("_").pop() || "json";
@@ -1266,9 +1483,11 @@ function populateArtifactViewer(artifacts, jobId) {
       const type = String(artifact.artifact_type || "").toUpperCase();
       if (type === "REVIEWED_TRANSCRIPT_MARKDOWN" || type === "REVIEWED_DRAFT_MD") return 0;
       if (type === "AUTOMATIC_TRANSCRIPT_MARKDOWN") return 1;
-      if (artifactCategory(artifact) === "MD") return 2;
-      if (artifactCategory(artifact) === "VTT") return 3;
-      return 4;
+      if (type === "JUTUSTA_EE_TRANSCRIPT_MARKDOWN") return 2;
+      if (type === "JUTUSTA_EE_COMPARISON_MARKDOWN") return 3;
+      if (artifactCategory(artifact) === "MD") return 4;
+      if (artifactCategory(artifact) === "VTT") return 5;
+      return 6;
     };
     const leftOrder = rank(left);
     const rightOrder = rank(right);
@@ -1381,6 +1600,7 @@ $("#participantReviewClose").addEventListener("click", () => {
 });
 $("#participantReviewSave").addEventListener("click", () => saveParticipantReview());
 $("#participantReviewViewer").addEventListener("close", destroyParticipantPlayers);
+$("#participantDefaultsConfirm").addEventListener("cancel", (event) => event.preventDefault());
 $("#reviewClose").addEventListener("click", () => $("#reviewViewer").close());
 $("#reviewPrevious").addEventListener("click", () => { if (state.review?.index > 0) { state.review.editingNeighborId = null; state.review.index -= 1; renderReview(); } });
 $("#reviewNext").addEventListener("click", () => { if (state.review && state.review.index < state.review.data.candidates.length - 1) { state.review.editingNeighborId = null; state.review.index += 1; renderReview(); } });

@@ -8,12 +8,37 @@ enne andmete kasutamist registrist
 [`docs/evaluation_data.md`](docs/evaluation_data.md). Registri `Jah`/`Ei`
 otsus kehtib ainult seal nimetatud protsessile või kandidaadivahemikule.
 
+Kursusetöö dokumendid, manifestid ja Gititavad analüüsi-/testskriptid on
+kataloogis [`docs/kursusetoo/`](docs/kursusetoo/README.md). Käitusaegsed CSV-d
+ja mudelikatsete väljundid jäävad `log/` kataloogi ning Git neid ei jälgi.
+
 Containeris töötav CLI, mis seob ERR-i olemasoleva VTT teksti audio-põhise
 kõnelejate diarization'iga. MVP1 ei tee uut automaatset kõnetuvastust ega
 automaatselt hääle järgi inimeste nimede määramist. MVP1.2 lisab eraldi
 Whisperi kontrolltöölise, mis kuulab üle ainult kahtlased lõigud ega muuda
 põhitranskriptsiooni automaatselt. MVP1.3 lisab sellest eraldi fixed-VTT
 forced-alignmenti katse inimese märgitud segalõikudele.
+
+## Kursusetöö mudelkatse GNU Octave'is
+
+Octave'i kasutatakse eraldi kursusetöö mudelkatseks; see ei ole rakenduse
+tootmispipeline'i osa. Serveri Octave'i paigalduse ja `octave11` käivitaja
+juhend asub väljaspool repositooriumi failis
+`/home/ubuntu/.local/share/octave-runtime/octave-ubuntu-setup.md`.
+
+Fikseeritud Test1 Octave'i katse käivitatakse projekti juurkataloogist:
+
+```bash
+octave11 --eval "addpath('docs/kursusetoo/scripts'); test_all_models_octave('log/training_data_b.csv', 'log/test1_data_b.csv');"
+```
+
+Katse kasutab samu sisendandmeid ja mõõdikuid kui MATLABi Test1, kuid Octave'i
+teostuse tulemusi käsitletakse eraldi katsena, mitte MATLABi arvude täpse
+bititasemel kordusena. Käivitus-, mudeli- ja väljundite kirjeldus on failis
+[docs/kursusetoo/test1_octave.md](docs/kursusetoo/test1_octave.md); skript on
+[docs/kursusetoo/scripts/test_all_models_octave.m](docs/kursusetoo/scripts/test_all_models_octave.m). Tulemused
+kirjutatakse projekti `log/` kataloogi uude unikaalse nimega
+`*_test1_octave/` alamkataloogi.
 
 ## Käivitamine
 

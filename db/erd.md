@@ -115,7 +115,7 @@ erDiagram
         VARCHAR2 occupation
         VARCHAR2 role
         NUMBER party_id FK
-        CHAR is_politician
+        VARCHAR2 is_politician
         VARCHAR2 political_alignment
     }
     PARTIES {
@@ -133,7 +133,7 @@ erDiagram
         VARCHAR2 role
         NUMBER party_id FK
         VARCHAR2 party_name
-        CHAR is_politician
+        VARCHAR2 is_politician
         VARCHAR2 political_alignment
         VARCHAR2 mapping_status
     }
@@ -292,7 +292,7 @@ väärtus `NULL`; tekstilist `N/A` erakonna jaoks ei kasutata.
 on seal tsentraalselt hallatavad; nii ei põhine erakondade kaupa tehtav
 analüüs vabateksti eri kirjapiltidel.
 
-Lugemiseks pakub Oracle'i vaade `participant_current_v` ühe rea aktiivse
+Lugemiseks pakub Oracle'i vaade `participants_v` ühe rea aktiivse
 osaleja kohta. Vaade ühendab aktiivse `participants` rea, sellele vastava
 aktiivse `participant_details` rea ja vajaduse korral erakonna nime. Vaade on
 ainult otsingu ning vormi eeltäitmise mugavuskiht: uue osaleja ja
@@ -305,8 +305,14 @@ detailiversiooni loomine toimub alus-tabelites selges kirjutustehingus.
 ```text
 AUTOMATIC_DRAFT
 REVIEWED_DRAFT
+JUTUSTA_EE_DRAFT
 FINAL
 ```
+
+`JUTUSTA_EE_DRAFT` on vabatahtlik uurimisversioon. See ei kuulu protsessi
+olekumasinasse, kasutaja ülevaatuse valikusse ega finaliseerimise sisendisse.
+Selle artefaktid võivad sisaldada Jutusta.ee muutmata lähteväljundit,
+loetavat transkriptsiooni ja versioonide tehnilist võrdlust.
 
 `transcript_participants.mapping_status`:
 

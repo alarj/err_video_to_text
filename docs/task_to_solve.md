@@ -375,13 +375,38 @@ MVP2.2 detailne ja autoriteetne lähteülesanne asub dokumendis
 [`MVP2.2.md`](MVP2.2.md). Nõudeid ei dubleerita siia, et etapi kirjeldus oleks
 ühes kohas.
 
-### MVP3 — säilitatud korpus ja RAG
+### MVP2.3 — osalejate vaikeprofiil ja saatehetke snapshot
 
-MVP3 lisab juba edukalt digitaliseeritud saadete säilitamise, versioonimise ja semantilise otsingu/RAG-i. See algab alles siis, kui transkriptide kvaliteet, JSON-skeem, töötlusversioonide tähendus ja korduvkasutuse reeglid on kinnitatud.
+MVP2.3 laiendab osalejate andmeid, muutmata MVP2.2 osalejate määramise,
+kõnelejapiiride ülevaatuse ega transkriptsiooniversioonide protsessi.
 
-RAG ei ole CLI- ega teenuse-tuuma sõltuvus. `Double_Check_AI` projekti ingest/retrieval põhimõtteid võib kasutada eeskujuna, kuid embedding-mudel otsustatakse selle etapi alguses. Vektorid, transkriptsioonilõigud ja metadata salvestatakse Oracle Database 26ai AI Vector Searchi peale; PostgreSQL-i ega eraldi vektorandmebaasi ei lisata.
+`participants` jääb inimese püsivaks identiteediks ning sisaldab nime ja
+vabalt muudetavat kirjeldust. Ajas muutuvad vaikeandmed paiknevad eraldi
+`participant_details` tabelis. Ühel osalejal on üks või mitu järjestikust
+detailiversiooni; uue vaikeprofiili loomisel suletakse vana detailikirje ning
+luuakse uus.
 
-### MVP2.3 — autentimine, kasutajad ja API võtmed
+`transcript_participants` on `participant_details`-ist sõltumatu
+saatehetke snapshot. Osaleja valimisel täidab UI vormi aktiivse
+vaikeprofiiliga, kuid kasutaja võib iga saate jaoks muuta organisatsiooni,
+ametit, saaterolli, erakonda, poliitiku staatust ja poliitilist positsiooni.
+Need väärtused salvestuvad alati ilmutatud kujul transkriptsiooni juurde ega
+muuda vaikimisi osaleja praeguseid andmeid. Kui kasutaja on väärtusi muutnud,
+küsib UI eraldi, kas luua neist ka uus `participant_details` vaikeprofiil.
+
+Snapshot'is säilivad organisatsioon, amet, saateroll, poliitiku staatus ja
+poliitiline positsioon tekstiliste väärtustena. Erakonna korral säilitatakse
+lisaks võimalikule `party_id`-le ka ilmutatud `party_name`. Erakond on
+tühjendatav: sel juhul on nii ID kui nimi `NULL`. Poliitilise positsiooni
+väärtused on `koalitsioon`, `opositsioon` ja `none`; `none` on vaikeväärtus
+ning selle peab saama igal ajal uuesti valida.
+
+Mudel võimaldab näiteks transkribeerida neli aastat vana intervjuu tänase
+poliitikuga: kasutaja saab salvestada selle saate snapshot'i varasema ameti,
+poliitiku staatuse, erakonna ja poliitilise positsiooniga, muutmata inimese
+tänast vaikeprofiili.
+
+### MVP2.4 — autentimine, kasutajad ja API võtmed
 
 Kui MVP2.1 anonüümne kasutus ja MVP2.2 ülevaatus on stabiilsed, lisatakse autentimine olemasolevale veebiliidesele ja API-le. Veebivorm kasutab jätkuvalt sama tööde- ja väljundmudelit nagu API-kliendid; eraldi paralleelset töövoogu ei looda.
 
@@ -389,7 +414,13 @@ Autentimise eelistatud suund on Google’i abil autentimine. Eraldi kasutajanime
 
 Autenditud kasutaja saab luua unikaalse API-võtme. Võtme toorväärtust näidatakse ainult loomisel; andmebaasis säilitatakse ainult selle turvaline räsi. Võtit peab saama tühistada ning hiljem lisada aegumise, õiguste ulatuse ja viimase kasutuse info.
 
-MVP2.3 skoobis on ka kasutajategevuse audit: kes, mida, millal ja kas veebist või API kaudu töö algatas. Enne autentimisega etappi tuleb kinnitada ERR-i sisu ja tuletatud transkriptide kasutusõigus, privaatsustingimused ning teenuse kasutustingimused.
+MVP2.4 skoobis on ka kasutajategevuse audit: kes, mida, millal ja kas veebist või API kaudu töö algatas. Enne autentimisega etappi tuleb kinnitada ERR-i sisu ja tuletatud transkriptide kasutusõigus, privaatsustingimused ning teenuse kasutustingimused.
+
+### MVP3 — säilitatud korpus ja RAG
+
+MVP3 lisab juba edukalt digitaliseeritud saadete säilitamise, versioonimise ja semantilise otsingu/RAG-i. See algab alles siis, kui transkriptide kvaliteet, JSON-skeem, töötlusversioonide tähendus ja korduvkasutuse reeglid on kinnitatud.
+
+RAG ei ole CLI- ega teenuse-tuuma sõltuvus. `Double_Check_AI` projekti ingest/retrieval põhimõtteid võib kasutada eeskujuna, kuid embedding-mudel otsustatakse selle etapi alguses. Vektorid, transkriptsioonilõigud ja metadata salvestatakse Oracle Database 26ai AI Vector Searchi peale; PostgreSQL-i ega eraldi vektorandmebaasi ei lisata.
 
 ### Ühised andme- ja juurutuspõhimõtted alates MVP2-st
 

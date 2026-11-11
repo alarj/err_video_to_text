@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="780" viewBox="0 0 1400 780" role="img" aria-labelledby="title desc">
+  <title id="title">ACCEPTED-klassi viis parimat mudelit: F1 ja Recall / TPR kuues katses</title>
+  <desc id="desc">Ühel joondiagrammil on F1 täisjoontena ja Recall / TPR katkendjoontena. Mõlemal teljel on sama protsendiskaala.</desc>
+  <style>
+    text { font-family: Arial, sans-serif; fill: #172033; }
+    .title { font-size: 28px; font-weight: 700; }
+    .subtitle, .axis { font-size: 16px; fill: #516176; }
+    .legend { font-size: 14px; font-weight: 600; }
+    .grid { stroke: #d9e1ea; stroke-width: 1; }
+    .line { fill: none; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; }
+    .recall { fill: none; stroke-width: 2.5; stroke-dasharray: 8 6; opacity: .88; }
+    .point { stroke: #fff; stroke-width: 2; }
+  </style>
+  <rect width="1400" height="780" fill="#fff"/>
+  <text x="55" y="45" class="title">ACCEPTED: F1 ja Recall / TPR viie parima mudeli puhul</text>
+  <line x1="300" y1="140" x2="1240" y2="140" class="grid"/><text x="246" y="146" class="axis">100%</text><text x="1252" y="146" class="axis">100%</text>
+  <line x1="300" y1="268" x2="1240" y2="268" class="grid"/><text x="254" y="274" class="axis">96%</text><text x="1252" y="274" class="axis">96%</text>
+  <line x1="300" y1="395" x2="1240" y2="395" class="grid"/><text x="254" y="401" class="axis">92%</text><text x="1252" y="401" class="axis">92%</text>
+  <line x1="300" y1="523" x2="1240" y2="523" class="grid"/><text x="254" y="529" class="axis">88%</text><text x="1252" y="529" class="axis">88%</text>
+  <line x1="300" y1="650" x2="1240" y2="650" class="grid"/><text x="254" y="656" class="axis">84%</text><text x="1252" y="656" class="axis">84%</text>
+  <line x1="175" y1="425" x2="175" y2="475" stroke="#8a96a6" stroke-width="3"/><text x="175" y="360" class="axis" transform="rotate(-90 175 360)">F1 (%)</text>
+  <line x1="1340" y1="245" x2="1340" y2="295" stroke="#8a96a6" stroke-width="3" stroke-dasharray="8 6"/><text x="1340" y="360" class="axis" transform="rotate(90 1340 360)">Recall / TPR (%)</text>
+  <text x="360" y="687" class="axis">B1</text><text x="510" y="687" class="axis">B2</text><text x="660" y="687" class="axis">C1</text><text x="810" y="687" class="axis">D1</text><text x="960" y="687" class="axis">X1</text><text x="1110" y="687" class="axis">Y1</text>
+
+  <path d="M370 292 L520 564 L670 544 L820 477 L970 449 L1120 405" class="line" stroke="#1769aa"/><path d="M370 261 L520 294 L670 298 L820 283 L970 193 L1120 193" class="recall" stroke="#1769aa"/>
+  <g fill="#1769aa"><circle cx="370" cy="292" r="6" class="point"/><circle cx="520" cy="564" r="6" class="point"/><circle cx="670" cy="544" r="6" class="point"/><circle cx="820" cy="477" r="6" class="point"/><circle cx="970" cy="449" r="6" class="point"/><circle cx="1120" cy="405" r="6" class="point"/><rect x="365" y="256" width="10" height="10" class="point"/><rect x="515" y="289" width="10" height="10" class="point"/><rect x="665" y="293" width="10" height="10" class="point"/><rect x="815" y="278" width="10" height="10" class="point"/><rect x="965" y="188" width="10" height="10" class="point"/><rect x="1115" y="188" width="10" height="10" class="point"/></g>
+
+  <path d="M370 327 L520 534 L670 558 L820 488 L970 476 L1120 451" class="line" stroke="#e07026"/><path d="M370 338 L520 397 L670 350 L820 319 L970 256 L1120 308" class="recall" stroke="#e07026"/>
+  <g fill="#e07026"><circle cx="370" cy="327" r="6" class="point"/><circle cx="520" cy="534" r="6" class="point"/><circle cx="670" cy="558" r="6" class="point"/><circle cx="820" cy="488" r="6" class="point"/><circle cx="970" cy="476" r="6" class="point"/><circle cx="1120" cy="451" r="6" class="point"/><rect x="365" y="333" width="10" height="10" class="point"/><rect x="515" y="392" width="10" height="10" class="point"/><rect x="665" y="345" width="10" height="10" class="point"/><rect x="815" y="314" width="10" height="10" class="point"/><rect x="965" y="251" width="10" height="10" class="point"/><rect x="1115" y="303" width="10" height="10" class="point"/></g>
+
+  <path d="M370 356 L520 595 L670 511 L820 474 L970 506 L1120 479" class="line" stroke="#8f2d8b"/><path d="M370 381 L520 397 L670 210 L820 247 L970 282 L1120 282" class="recall" stroke="#8f2d8b"/>
+  <g fill="#8f2d8b"><circle cx="370" cy="356" r="6" class="point"/><circle cx="520" cy="595" r="6" class="point"/><circle cx="670" cy="511" r="6" class="point"/><circle cx="820" cy="474" r="6" class="point"/><circle cx="970" cy="506" r="6" class="point"/><circle cx="1120" cy="479" r="6" class="point"/><rect x="365" y="376" width="10" height="10" class="point"/><rect x="515" y="392" width="10" height="10" class="point"/><rect x="665" y="205" width="10" height="10" class="point"/><rect x="815" y="242" width="10" height="10" class="point"/><rect x="965" y="277" width="10" height="10" class="point"/><rect x="1115" y="277" width="10" height="10" class="point"/></g>
+
+  <path d="M370 320 L520 570 L670 574 L820 468 L970 460 L1120 416" class="line" stroke="#1b8d63"/><path d="M370 304 L520 345 L670 367 L820 265 L970 228 L1120 256" class="recall" stroke="#1b8d63"/>
+  <g fill="#1b8d63"><circle cx="370" cy="320" r="6" class="point"/><circle cx="520" cy="570" r="6" class="point"/><circle cx="670" cy="574" r="6" class="point"/><circle cx="820" cy="468" r="6" class="point"/><circle cx="970" cy="460" r="6" class="point"/><circle cx="1120" cy="416" r="6" class="point"/><rect x="365" y="299" width="10" height="10" class="point"/><rect x="515" y="340" width="10" height="10" class="point"/><rect x="665" y="362" width="10" height="10" class="point"/><rect x="815" y="260" width="10" height="10" class="point"/><rect x="965" y="223" width="10" height="10" class="point"/><rect x="1115" y="251" width="10" height="10" class="point"/></g>
+
+  <path d="M370 303 L520 588 L670 572 L820 465 L970 458 L1120 430" class="line" stroke="#b74444"/><path d="M370 278 L520 345 L670 350 L820 230 L970 210 L1120 228" class="recall" stroke="#b74444"/>
+  <g fill="#b74444"><circle cx="370" cy="303" r="6" class="point"/><circle cx="520" cy="588" r="6" class="point"/><circle cx="670" cy="572" r="6" class="point"/><circle cx="820" cy="465" r="6" class="point"/><circle cx="970" cy="458" r="6" class="point"/><circle cx="1120" cy="430" r="6" class="point"/><rect x="365" y="273" width="10" height="10" class="point"/><rect x="515" y="340" width="10" height="10" class="point"/><rect x="665" y="345" width="10" height="10" class="point"/><rect x="815" y="225" width="10" height="10" class="point"/><rect x="965" y="205" width="10" height="10" class="point"/><rect x="1115" y="223" width="10" height="10" class="point"/></g>
+
+  <g fill="#d92525" stroke="#fff" stroke-width="2"><circle cx="370" cy="241" r="8"/><circle cx="520" cy="430" r="8"/><circle cx="670" cy="443" r="8"/><circle cx="820" cy="418" r="8"/><circle cx="970" cy="403" r="8"/><circle cx="1120" cy="356" r="8"/><rect x="363" y="133" width="14" height="14"/><rect x="513" y="133" width="14" height="14"/><rect x="663" y="133" width="14" height="14"/><rect x="813" y="133" width="14" height="14"/><rect x="963" y="133" width="14" height="14"/><rect x="1113" y="133" width="14" height="14"/></g>
+
+  <line x1="55" y1="720" x2="82" y2="720" class="line" stroke="#1769aa"/><text x="92" y="726" class="legend">1. KNN k=7 equal, duration_s eemaldatud</text>
+  <line x1="430" y1="720" x2="457" y2="720" class="line" stroke="#e07026"/><text x="467" y="726" class="legend">2. SVM Kernel, duration_s eemaldatud</text>
+  <line x1="790" y1="720" x2="817" y2="720" class="line" stroke="#8f2d8b"/><text x="827" y="726" class="legend">3. KNN k=7 inverse, show_speaker_count eemaldatud</text>
+  <line x1="55" y1="748" x2="82" y2="748" class="line" stroke="#1b8d63"/><text x="92" y="754" class="legend">4. KNN k=10 inverse, kõik 8 atribuuti</text>
+  <line x1="430" y1="748" x2="457" y2="748" class="line" stroke="#b74444"/><text x="467" y="754" class="legend">5. KNN k=7 equal, kõik 8 atribuuti</text>
+  <circle cx="1040" cy="741" r="7" fill="#d92525"/><rect x="1053" y="734" width="14" height="14" fill="#d92525"/><text x="1078" y="746" class="legend">Parim muu mudel</text>
+</svg>

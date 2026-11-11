@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="760" viewBox="0 0 1400 760" role="img" aria-labelledby="title desc">
+  <title id="title">ACCEPTED-klassi top-5 mudelite F1 näidis</title>
+  <desc id="desc">Horisontaalne vahemikdiagramm. Iga rida näitab B1–D1 keskmist, X1 ja Y1 F1 tulemust ning nende kolme tulemuse vahemikku.</desc>
+  <style>
+    text { font-family: Arial, sans-serif; fill: #172033; }
+    .title { font-size: 29px; font-weight: 700; }
+    .subtitle { font-size: 16px; fill: #516176; }
+    .axis { font-size: 15px; fill: #516176; }
+    .label { font-size: 17px; font-weight: 600; }
+    .note { font-size: 14px; fill: #516176; }
+    .grid { stroke: #d9e1ea; stroke-width: 1; }
+    .range { stroke: #aab7c8; stroke-width: 8; stroke-linecap: round; }
+    .bcd { fill: #1f77b4; }
+    .x1 { fill: #ef7f35; }
+    .y1 { fill: #2c9a5b; }
+    .value { font-size: 14px; font-weight: 600; }
+  </style>
+  <rect width="1400" height="760" fill="#ffffff"/>
+  <text x="55" y="52" class="title">ACCEPTED-klassi viis parimat mudelit: F1 eri testides</text>
+  <text x="55" y="80" class="subtitle">Igal real: B1–D1 keskmine, X1 ja Y1. Hall joon näitab nende kolme tulemuse vahemikku.</text>
+
+  <line x1="550" y1="135" x2="550" y2="650" class="grid"/>
+  <line x1="725" y1="135" x2="725" y2="650" class="grid"/>
+  <line x1="900" y1="135" x2="900" y2="650" class="grid"/>
+  <line x1="1075" y1="135" x2="1075" y2="650" class="grid"/>
+  <line x1="1250" y1="135" x2="1250" y2="650" class="grid"/>
+  <text x="538" y="675" class="axis">84%</text>
+  <text x="713" y="675" class="axis">86%</text>
+  <text x="888" y="675" class="axis">88%</text>
+  <text x="1063" y="675" class="axis">90%</text>
+  <text x="1238" y="675" class="axis">92%</text>
+  <text x="830" y="715" class="axis">F1 skoor</text>
+
+  <circle cx="570" cy="115" r="8" class="bcd"/><text x="585" y="120" class="axis">B1–D1 keskmine</text>
+  <circle cx="760" cy="115" r="8" class="x1"/><text x="775" y="120" class="axis">X1</text>
+  <circle cx="830" cy="115" r="8" class="y1"/><text x="845" y="120" class="axis">Y1</text>
+
+  <text x="55" y="205" class="label">1. KNN k=7 equal,</text><text x="55" y="228" class="label">duration_s eemaldatud</text>
+  <line x1="1049" y1="210" x2="1228" y2="210" class="range"/>
+  <circle cx="1049" cy="210" r="10" class="bcd"/><circle cx="1106" cy="210" r="10" class="x1"/><circle cx="1228" cy="210" r="10" class="y1"/>
+  <text x="1030" y="243" class="value">89,71</text><text x="1087" y="243" class="value">90,36</text><text x="1209" y="243" class="value">91,75</text>
+
+  <text x="55" y="305" class="label">2. SVM Kernel,</text><text x="55" y="328" class="label">duration_s eemaldatud</text>
+  <line x1="1028" y1="310" x2="1099" y2="310" class="range"/>
+  <circle cx="1028" cy="310" r="10" class="bcd"/><circle cx="1031" cy="310" r="10" class="x1"/><circle cx="1099" cy="310" r="10" class="y1"/>
+  <text x="1009" y="343" class="value">89,47</text><text x="1012" y="289" class="value">89,51</text><text x="1080" y="343" class="value">90,29</text>
+
+  <text x="55" y="405" class="label">3. KNN k=7 inverse,</text><text x="55" y="428" class="label">show_speaker_count eemaldatud</text>
+  <line x1="942" y1="410" x2="1023" y2="410" class="range"/>
+  <circle cx="1000" cy="410" r="10" class="bcd"/><circle cx="942" cy="410" r="10" class="x1"/><circle cx="1017" cy="410" r="10" class="y1"/>
+  <text x="981" y="443" class="value">89,21</text><text x="923" y="389" class="value">88,49</text><text x="998" y="443" class="value">89,41</text>
+
+  <text x="55" y="505" class="label">4. KNN k=10 inverse,</text><text x="55" y="528" class="label">kõik 8 atribuuti</text>
+  <line x1="1006" y1="510" x2="1196" y2="510" class="range"/>
+  <circle cx="1006" cy="510" r="10" class="bcd"/><circle cx="1078" cy="510" r="10" class="x1"/><circle cx="1196" cy="510" r="10" class="y1"/>
+  <text x="987" y="543" class="value">89,28</text><text x="1059" y="543" class="value">90,03</text><text x="1177" y="543" class="value">91,38</text>
+
+  <text x="55" y="605" class="label">5. KNN k=7 equal,</text><text x="55" y="628" class="label">kõik 8 atribuuti</text>
+  <line x1="1008" y1="610" x2="1160" y2="610" class="range"/>
+  <circle cx="1008" cy="610" r="10" class="bcd"/><circle cx="1082" cy="610" r="10" class="x1"/><circle cx="1160" cy="610" r="10" class="y1"/>
+  <text x="989" y="643" class="value">89,30</text><text x="1063" y="643" class="value">90,08</text><text x="1141" y="643" class="value">90,96</text>
+</svg>

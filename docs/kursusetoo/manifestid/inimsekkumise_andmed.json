@@ -1,0 +1,185 @@
+{
+  "response": "human_interaction_required",
+  "mapping": {
+    "ACCEPTED": "0",
+    "REJECTED": "0",
+    "MODIFIED": "1"
+  },
+  "attributes": [
+    "duration_s",
+    "words",
+    "show_speaker_count",
+    "candidate_type",
+    "internal_speaker_change_count",
+    "distinct_speaker_count",
+    "dominant_speaker_coverage",
+    "nearest_change_edge_ratio"
+  ],
+  "datasets": {
+    "B": {
+      "source": "log/training_data_b.csv",
+      "output": "log/training_data_b_inimsekkumine.csv",
+      "rows": 1006,
+      "source_decisions": {
+        "ACCEPTED": 251,
+        "MODIFIED": 454,
+        "REJECTED": 301
+      },
+      "binary_classes": {
+        "0": 552,
+        "1": 454
+      },
+      "sha256": "8a75d1524e52d08dd6987a410026ed4a9a7c162fb29d455fa21c53ee50f6e6cc"
+    },
+    "B1": {
+      "source": "log/test1_data_b.csv",
+      "output": "log/test1_data_b_inimsekkumine.csv",
+      "rows": 488,
+      "source_decisions": {
+        "ACCEPTED": 290,
+        "MODIFIED": 107,
+        "REJECTED": 91
+      },
+      "binary_classes": {
+        "0": 381,
+        "1": 107
+      },
+      "sha256": "cebef1b65e2103a17614059f96be8fb1527be34adac8d495236e7de49ccfa731"
+    },
+    "B2": {
+      "source": "log/test2_data_b.csv",
+      "output": "log/test2_data_b_inimsekkumine.csv",
+      "rows": 337,
+      "source_decisions": {
+        "ACCEPTED": 62,
+        "MODIFIED": 151,
+        "REJECTED": 124
+      },
+      "binary_classes": {
+        "0": 186,
+        "1": 151
+      },
+      "sha256": "7c12512c2f58716086ee68a6b9452f3a56ec860d4f778fcc9a3734ccddec751a"
+    },
+    "C": {
+      "source": "log/training_data_c.csv",
+      "output": "log/training_data_c_inimsekkumine.csv",
+      "rows": 1277,
+      "source_decisions": {
+        "ACCEPTED": 421,
+        "MODIFIED": 497,
+        "REJECTED": 359
+      },
+      "binary_classes": {
+        "0": 780,
+        "1": 497
+      },
+      "sha256": "24e88b7bac39d17282dd68f43f35b063f9a7482e24f55d207b410f224e7e732f"
+    },
+    "C1": {
+      "source": "log/test_data_c1.csv",
+      "output": "log/test_data_c1_inimsekkumine.csv",
+      "rows": 554,
+      "source_decisions": {
+        "ACCEPTED": 182,
+        "MODIFIED": 215,
+        "REJECTED": 157
+      },
+      "binary_classes": {
+        "0": 339,
+        "1": 215
+      },
+      "sha256": "529ba86fe44ca7d4721f50600312fb9fb4205830784d70a2432685fc4b5facfb"
+    },
+    "D": {
+      "source": "log/training_data_d.csv",
+      "output": "log/training_data_d_inimsekkumine.csv",
+      "rows": 1283,
+      "source_decisions": {
+        "ACCEPTED": 425,
+        "MODIFIED": 495,
+        "REJECTED": 363
+      },
+      "binary_classes": {
+        "0": 788,
+        "1": 495
+      },
+      "sha256": "f447ffe3ee000a6a39366557bea4bc1fd3eb3ad4fd6f8f079814fe88bd581976"
+    },
+    "D1": {
+      "source": "log/test_data_d1.csv",
+      "output": "log/test_data_d1_inimsekkumine.csv",
+      "rows": 548,
+      "source_decisions": {
+        "ACCEPTED": 178,
+        "MODIFIED": 217,
+        "REJECTED": 153
+      },
+      "binary_classes": {
+        "0": 331,
+        "1": 217
+      },
+      "sha256": "53dd9f721c2903296a0b5e6bfad1ea3caa7ce4a9f2a5d5eddce8c99898190140"
+    },
+    "X": {
+      "source": "log/training_data_x.csv",
+      "output": "log/training_data_x_inimsekkumine.csv",
+      "rows": 1281,
+      "source_decisions": {
+        "ACCEPTED": 422,
+        "MODIFIED": 498,
+        "REJECTED": 361
+      },
+      "binary_classes": {
+        "0": 783,
+        "1": 498
+      },
+      "sha256": "e10372462a977d71815fbbf044c7ace5f0452d52ea046e87335f74560c9fbbd2"
+    },
+    "X1": {
+      "source": "log/test_data_x1.csv",
+      "output": "log/test_data_x1_inimsekkumine.csv",
+      "rows": 550,
+      "source_decisions": {
+        "ACCEPTED": 181,
+        "MODIFIED": 214,
+        "REJECTED": 155
+      },
+      "binary_classes": {
+        "0": 336,
+        "1": 214
+      },
+      "sha256": "d6e592578f0082fcbc1f31f029058dd4809f5aef51a032d1d0a8e17ecb57e9c5"
+    },
+    "Y": {
+      "source": "log/training_data_y.csv",
+      "output": "log/training_data_y_inimsekkumine.csv",
+      "rows": 1281,
+      "source_decisions": {
+        "ACCEPTED": 422,
+        "MODIFIED": 498,
+        "REJECTED": 361
+      },
+      "binary_classes": {
+        "0": 783,
+        "1": 498
+      },
+      "sha256": "29f226190ccaaa2a9e3707ab1c2853c33d545f8b0ac4d6c7acea6a1d50d95597"
+    },
+    "Y1": {
+      "source": "log/test_data_y1.csv",
+      "output": "log/test_data_y1_inimsekkumine.csv",
+      "rows": 550,
+      "source_decisions": {
+        "ACCEPTED": 181,
+        "MODIFIED": 214,
+        "REJECTED": 155
+      },
+      "binary_classes": {
+        "0": 336,
+        "1": 214
+      },
+      "sha256": "ee90f87ad3289b5f117deaf177d7d0a1037cf9bc87da5d5a2089552f298d9247"
+    }
+  }
+}
