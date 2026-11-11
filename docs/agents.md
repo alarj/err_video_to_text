@@ -84,8 +84,11 @@
 - [`docs/kursusetoo/README.md`](kursusetoo/README.md)
 - [`docs/err2text_bpmn.drawio`](err2text_bpmn.drawio)
 - [`docs/err2text_bpmn.drawio.png`](err2text_bpmn.drawio.png)
+- [`docs/mvp3_ords_queue.md`](mvp3_ords_queue.md)
 - [`db/erd.md`](../db/erd.md)
 - [`db/schema/001_core_schema.sql`](../db/schema/001_core_schema.sql)
+- [`db/schema/008_mvp3_ords_queue.sql`](../db/schema/008_mvp3_ords_queue.sql)
+- Keskse järjekorra API: `/home/ubuntu/projektid/jenkins/docs/api.md`
 
 ### Rakenduse ja juurutuse allikad
 
@@ -95,16 +98,18 @@
 - [`backend/app/main.py`](../backend/app/main.py)
 - [`backend/app/api/routes.py`](../backend/app/api/routes.py)
 - [`backend/app/services/resolver.py`](../backend/app/services/resolver.py)
+- [`backend/app/services/ords.py`](../backend/app/services/ords.py)
 - [`backend/worker.py`](../backend/worker.py)
+- [`backend/ords_worker.py`](../backend/ords_worker.py)
 - [`.env.example`](../.env.example)
 
 ## 7. Millal mida kindlasti lugeda
 
-- Kui muudad API vastuseid, tööde järjekorda või teenuste vahelist piiri, loe `docs/task_to_solve.md`, `docs/err2text_bpmn.drawio`, `backend/app/main.py`, `backend/app/api/routes.py` ja `backend/worker.py`.
+- Kui muudad API vastuseid, tööde järjekorda või teenuste vahelist piiri, loe `docs/task_to_solve.md`, `docs/mvp3_ords_queue.md`, `/home/ubuntu/projektid/jenkins/docs/api.md`, `docs/err2text_bpmn.drawio`, `backend/app/main.py`, `backend/app/api/routes.py`, `backend/app/services/ords.py` ja `backend/ords_worker.py`.
 - Kui muudad arhitektuuri või konteinerite vastutusi, loe `docs/task_to_solve.md`, `compose.yaml`, `Dockerfile` ja `Dockerfile.api`.
 - Kui muudad andmestruktuure või andmebaasipoolseid reegleid, loe `db/erd.md` ja `db/schema/001_core_schema.sql`.
 - Kui muudad URL-i lahendamist või meediaallikate salvestamist, loe `backend/app/services/resolver.py`, `backend/app/api/routes.py` ja BPMN-protsessi.
-- Kui muudad jõudlust või diarization’i käitamist, loe `docs/task_to_solve.md`, `compose.yaml` ja `backend/worker.py`.
+- Kui muudad jõudlust või diarization’i käitamist, loe `docs/task_to_solve.md`, `docs/mvp3_ords_queue.md`, `compose.yaml` ja `backend/ords_worker.py`.
 - Kui kasutad protsessiandmeid kvantitatiivseks analüüsiks või mudeli
   õpetamiseks või muudad nende kasutusluba, loe enne
   `docs/evaluation_data.md`. Kasutada tohib ainult registris vastava eesmärgi

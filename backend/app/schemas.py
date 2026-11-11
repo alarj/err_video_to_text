@@ -33,6 +33,8 @@ class JobResponse(BaseModel):
     id: int
     status: str
     reused: bool = False
+    queue_status: str | None = None
+    error_message: str | None = None
 
 
 class ParticipantCreateRequest(BaseModel):

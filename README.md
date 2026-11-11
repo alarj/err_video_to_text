@@ -1,4 +1,4 @@
-# ERR2TEXT MVP1.3
+# ERR2TEXT MVP3
 
 Projekti tööreeglid ja tõeallikate register on dokumendis
 [`docs/agents.md`](docs/agents.md).
@@ -18,6 +18,40 @@ automaatselt hääle järgi inimeste nimede määramist. MVP1.2 lisab eraldi
 Whisperi kontrolltöölise, mis kuulab üle ainult kahtlased lõigud ega muuda
 põhitranskriptsiooni automaatselt. MVP1.3 lisab sellest eraldi fixed-VTT
 forced-alignmenti katse inimese märgitud segalõikudele.
+
+MVP3 viib veebirakenduse taustatööd kesksele ORDS-i järjekorrale. ORDS on
+ainus autoriteetne järjekord; Oracle'i `background_operations` säilitab ainult
+ERR-i protsessi ja ORDS-i töö seose ning kohaliku täitmise tulemuse. Eraldi
+kohalikku järjekorda ega selle varumehhanismi ei ole.
+
+MVP3 täpne leping ja kasutuselevõtu järjekord on dokumendis
+[`docs/mvp3_ords_queue.md`](docs/mvp3_ords_queue.md). Keskse API üldleping on
+serveri dokumendis `/home/ubuntu/projektid/jenkins/docs/api.md`.
+
+## MVP3 taustatöö
+
+Uue saate kinnitamisel loob API ühe `diarization` taustatoimingu ja
+registreerib selle ORDS-is. Selle ühe töö sisse kuuluvad järjest:
+
+1. audio ja VTT allalaadimine;
+2. VTT kontroll ja normaliseerimine;
+3. diariseerimine ning VTT-ga liitmine;
+4. `AUTOMATIC_DRAFT` materialiseerimine.
+
+Õnnestunud ORDS-i töö lõpeb siis, kui esialgne diariseeritud fail on kasutaja
+ülevaatuseks valmis. Kasutaja ülevaatus ei ole taustatöö. Ülevaatusele järgnev
+automaatne etapp ei ole veel otsustatud; kui see lisatakse, luuakse selle jaoks
+eraldi `background_operations` kirje ja eraldi ORDS-i töö.
+
+ORDS-i haldusvaate informatiivne `media_title` sisaldab alati saate tegelikku
+toimumis-/avaldamiskuupäeva kujul `YYYY-MM-DD — pealkiri`. Vanu olemasolevaid
+saateid MVP3 migratsioon ORDS-i tagantjärele ei registreeri.
+
+Vajalikud serveri seadistused on `.env.example` failis: `ORDS_BASE_URL`,
+`ORDS_OAUTH_CLIENT_ID`, `ORDS_OAUTH_CLIENT_SECRET`, claim'i ja heartbeat'i
+intervallid ning `WORKER_HOST_ID`. Enne uue koodi käivitamist tuleb rakendada
+`db/schema/008_mvp3_ords_queue.sql`; migratsiooni ja deploy'd ei tohi teha
+vastupidises järjekorras.
 
 ## Kursusetöö mudelkatse GNU Octave'is
 

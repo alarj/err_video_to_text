@@ -5,8 +5,9 @@ from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from hashlib import sha256
 import json
-import os
 from pathlib import Path
+from functools import lru_cache
+import uuid
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
@@ -22,6 +23,7 @@ from app.schemas import (
     ResolveRequest,
 )
 from app.services.resolver import resolve
+from app.services.ords import OrdsClient, OrdsError, OrdsSettings
 from app.services.participant_review import select_speaker_samples
 from err2text.errors import PipelineError
 from err2text.sentence_boundary_review.runner import suggest_sentence_split
@@ -29,6 +31,11 @@ from err2text.sentence_boundary_review.runner import suggest_sentence_split
 router = APIRouter()
 
 _SECOND_QUANTUM = Decimal("0.001")
+
+
+@lru_cache(maxsize=1)
+def _ords_client() -> OrdsClient:
+    return OrdsClient(OrdsSettings.from_env())
 
 
 def _normalize_second(value: object) -> Decimal:
@@ -195,6 +202,9 @@ def create_job(request: CreateJobRequest) -> JobResponse:
     if not media.canonical_url:
         raise HTTPException(status_code=400, detail="selected_media.canonical_url is required")
 
+    published_at = _parse_date(request.published_date)
+    operation_id: int | None = None
+    idempotency_key: str | None = None
     with connection() as conn:
         cursor = conn.cursor()
         try:
@@ -216,7 +226,13 @@ def create_job(request: CreateJobRequest) -> JobResponse:
                 conn.commit()
                 return JobResponse(id=process_id, status="FINISHED", reused=True)
 
-            status = "WAITING_FOR_RESULT" if active_parent is not None else "DOWNLOADING"
+            if active_parent is None and published_at is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="published_date is required for ORDS queue display",
+                )
+
+            status = "WAITING_FOR_RESULT" if active_parent is not None else "DIARIZING"
             cursor.execute(
                 """INSERT INTO processes
                    (parent_process_id, source_id, media_item_id, status, started_at)
@@ -226,17 +242,50 @@ def create_job(request: CreateJobRequest) -> JobResponse:
                  "status": status, "process_id": process_var},
             )
             process_id = int(process_var.getvalue()[0])
-            activity_type = "WAITING_FOR_RESULT" if active_parent is not None else "DOWNLOADING"
+            activity_type = "WAITING_FOR_RESULT" if active_parent is not None else "DIARIZING"
             cursor.execute(
                 """INSERT INTO activities (process_id, activity_type, started_at)
                    VALUES (:process_id, :activity_type, SYSTIMESTAMP)""",
                 {"process_id": process_id, "activity_type": activity_type},
             )
+            if active_parent is None:
+                operation_id, idempotency_key = _insert_background_operation(cursor, process_id)
             conn.commit()
-            return JobResponse(id=process_id, status=status)
         except Exception:
             conn.rollback()
             raise
+
+    if operation_id is None or idempotency_key is None:
+        return JobResponse(id=process_id, status=status)
+
+    if published_at is None:  # Guard for type narrowing; new root jobs require it above.
+        raise RuntimeError("New diarization operation has no published date")
+    media_title = f"{published_at.date().isoformat()} — {media.title or request.title or 'ERR media'}"
+    media_published_date = _utc_iso(published_at) or published_at.date().isoformat()
+    try:
+        registered = _ords_client().register_diarization(
+            operation_id=operation_id,
+            process_id=process_id,
+            idempotency_key=idempotency_key,
+            media_title=media_title,
+            media_published_date=media_published_date,
+        )
+        ords_job_id = int(registered["job_id"])
+        _set_operation_registered(operation_id, ords_job_id)
+        return JobResponse(
+            id=process_id,
+            status=status,
+            queue_status=str(registered.get("status") or "QUEUED"),
+        )
+    except (OrdsError, KeyError, TypeError, ValueError) as exc:
+        code = exc.code if isinstance(exc, OrdsError) else "INVALID_ORDS_RESPONSE"
+        _set_registration_error(operation_id, code, str(exc))
+        return JobResponse(
+            id=process_id,
+            status=status,
+            queue_status="REGISTRATION_ERROR",
+            error_message=str(exc),
+        )
 
 
 @router.get("/jobs")
@@ -246,9 +295,13 @@ def list_jobs(limit: int = Query(default=200, ge=1, le=200)) -> list[dict[str, o
         cursor.execute(
             """SELECT p.id, p.status, p.created, src.url,
                       NVL(src.title, m.title), src.published_date,
-                      (SELECT a.error_message FROM activities a
+                      COALESCE((SELECT a.error_message FROM activities a
                        WHERE a.process_id = p.id AND a.result = 'ERROR' AND a.end_date IS NULL
-                       ORDER BY a.id DESC FETCH FIRST 1 ROW ONLY)
+                       ORDER BY a.id DESC FETCH FIRST 1 ROW ONLY),
+                      (SELECT bo.registration_error_message FROM background_operations bo
+                       WHERE bo.process_id = p.id AND bo.end_date IS NULL
+                         AND bo.registration_error_message IS NOT NULL
+                       ORDER BY bo.operation_id DESC FETCH FIRST 1 ROW ONLY))
                  FROM processes p
                  JOIN sources src ON src.id = p.source_id
                  JOIN media_items m ON m.id = p.media_item_id
@@ -349,34 +402,28 @@ def list_jobs(limit: int = Query(default=200, ge=1, le=200)) -> list[dict[str, o
         for process_id, _participant_id, participant_name in cursor.fetchall():
             assigned_names[int(process_id)].append(str(participant_name))
 
+        operations_by_process = _latest_background_operations(cursor, job_ids)
+
         result = []
         for row in rows:
             process_id = int(row[0])
             summary = _job_summary(row)
+            operation = operations_by_process.get(process_id)
+            if operation is not None:
+                summary["background_operation"] = operation
             summary["review"] = review_counts.get(process_id, {"total": 0, "pending": 0})
             summary["participants"] = {
                 **participant_counts.get(process_id, {"total": 0, "unresolved": 0}),
                 "assigned_names": assigned_names.get(process_id, []),
             }
             result.append(summary)
-        return result
+    return _with_ords_operation_statuses(result)
 
 
 @router.get("/queue-status")
-def get_queue_status() -> dict[str, int]:
-    with connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            """SELECT COUNT(*)
-                 FROM activities
-                WHERE activity_type = 'DIARIZING'
-                  AND execution_started_at IS NOT NULL
-                  AND finished_at IS NULL
-                  AND end_date IS NULL"""
-        )
-        running = int(cursor.fetchone()[0])
-    maximum = max(1, int(os.getenv("ERR2TEXT_MAX_CONCURRENT_DIARIZATIONS", "1")))
-    return {"running_diarizations": running, "max_concurrent_diarizations": maximum}
+def get_queue_status() -> dict[str, str]:
+    """Compatibility endpoint; ORDS is the only queue authority in MVP3."""
+    return {"authority": "ORDS"}
 
 
 @router.get("/participants")
@@ -548,12 +595,20 @@ def get_job(job_id: int) -> dict[str, object]:
                       src.source_type, src.title, src.description, src.published_date,
                       m.title, m.description, m.media_type, m.canonical_url,
                       m.external_id, m.duration_second,
-                      (SELECT a.error_code FROM activities a
+                      COALESCE((SELECT a.error_code FROM activities a
                        WHERE a.process_id = p.id AND a.result = 'ERROR' AND a.end_date IS NULL
                        ORDER BY a.id DESC FETCH FIRST 1 ROW ONLY),
-                      (SELECT a.error_message FROM activities a
+                      (SELECT bo.registration_error_code FROM background_operations bo
+                       WHERE bo.process_id = p.id AND bo.end_date IS NULL
+                         AND bo.registration_error_code IS NOT NULL
+                       ORDER BY bo.operation_id DESC FETCH FIRST 1 ROW ONLY)),
+                      COALESCE((SELECT a.error_message FROM activities a
                        WHERE a.process_id = p.id AND a.result = 'ERROR' AND a.end_date IS NULL
                        ORDER BY a.id DESC FETCH FIRST 1 ROW ONLY),
+                      (SELECT bo.registration_error_message FROM background_operations bo
+                       WHERE bo.process_id = p.id AND bo.end_date IS NULL
+                         AND bo.registration_error_message IS NOT NULL
+                       ORDER BY bo.operation_id DESC FETCH FIRST 1 ROW ONLY)),
                       p.created
                  FROM processes p
                  JOIN sources src ON src.id = p.source_id
@@ -565,7 +620,7 @@ def get_job(job_id: int) -> dict[str, object]:
         row = cursor.fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="Process not found")
-        return {
+        result = {
             "id": row[0], "status": row[1], "submitted_url": row[2],
             "title": row[5] or row[8], "error_code": row[14], "error_message": row[15],
             "submitted_at": _utc_iso(row[16]), "resolved_at": _utc_iso(row[3]),
@@ -574,6 +629,10 @@ def get_job(job_id: int) -> dict[str, object]:
             "media_description": row[9], "media_type": row[10], "media_url": row[11],
             "media_external_id": row[12], "duration_second": row[13],
         }
+        operation = _latest_background_operations(cursor, [job_id]).get(job_id)
+        if operation is not None:
+            result["background_operation"] = operation
+    return _with_ords_operation_statuses([result])[0]
 
 
 @router.get("/jobs/{job_id}/events")
@@ -582,21 +641,39 @@ def get_job_events(job_id: int) -> list[dict[str, object]]:
         cursor = conn.cursor()
         _require_process(cursor, job_id)
         cursor.execute(
-            """SELECT id, activity_type, started_at, finished_at, result, error_code, error_message
-                 FROM activities
+            """SELECT operation_id, operation_type, attempt_number, ords_job_id,
+                      registration_error_message, ords_registered_at,
+                      local_started_at, local_completed_at, local_outcome,
+                      local_error_code, local_error_message, created
+                 FROM background_operations
                 WHERE process_id = :process_id AND end_date IS NULL
-                ORDER BY started_at, id""",
+                ORDER BY operation_id""",
             {"process_id": job_id},
         )
-        result = []
+        operations = []
         for row in cursor.fetchall():
-            detail = row[6] if row[6] else (f"Tulemus: {row[4]}" if row[4] else "Tegevus käib.")
-            result.append({
-                "id": row[0], "status": row[1], "event_type": row[1], "detail": detail,
-                "event_at": _utc_iso(row[2]), "finished_at": _utc_iso(row[3]),
-                "run_status": row[4], "result": row[4], "error_code": row[5],
+            operations.append({
+                "operation_id": int(row[0]), "operation_type": str(row[1]),
+                "attempt_number": int(row[2]),
+                "ords_job_id": int(row[3]) if row[3] is not None else None,
+                "registration_error_message": str(row[4]) if row[4] is not None else None,
+                "registered_at": _utc_iso(row[5]), "local_started_at": _utc_iso(row[6]),
+                "local_completed_at": _utc_iso(row[7]),
+                "local_outcome": str(row[8]) if row[8] is not None else None,
+                "local_error_code": str(row[9]) if row[9] is not None else None,
+                "local_error_message": str(row[10]) if row[10] is not None else None,
+                "created_at": _utc_iso(row[11]),
             })
-        return result
+    _with_ords_operation_statuses([{"background_operation": operation} for operation in operations])
+    return [{
+        "id": operation["operation_id"],
+        "operation_type": operation["operation_type"],
+        "status": operation["status"],
+        "event_at": operation["local_started_at"] or operation["registered_at"] or operation["created_at"],
+        "finished_at": operation["local_completed_at"],
+        "run_status": operation["local_outcome"],
+        "detail": operation["local_error_message"] or operation["registration_error_message"] or "",
+    } for operation in operations]
 
 
 @router.get("/jobs/{job_id}/artifacts")
@@ -2048,6 +2125,60 @@ def _job_summary(row) -> dict[str, object]:
     }
 
 
+def _latest_background_operations(cursor, process_ids: list[int]) -> dict[int, dict[str, object]]:
+    if not process_ids:
+        return {}
+    binds = {f"process_id_{index}": process_id for index, process_id in enumerate(process_ids)}
+    placeholders = ", ".join(f":process_id_{index}" for index in range(len(process_ids)))
+    cursor.execute(
+        f"""SELECT operation_id, process_id, operation_type, attempt_number, ords_job_id,
+                          local_outcome, registration_error_message
+                     FROM (
+                         SELECT bo.operation_id, bo.process_id, bo.operation_type, bo.attempt_number,
+                                bo.ords_job_id, bo.local_outcome, bo.registration_error_message,
+                                ROW_NUMBER() OVER (
+                                    PARTITION BY bo.process_id ORDER BY bo.operation_id DESC
+                                ) AS operation_rank
+                           FROM background_operations bo
+                          WHERE bo.process_id IN ({placeholders}) AND bo.end_date IS NULL
+                     )
+                    WHERE operation_rank = 1""",
+        binds,
+    )
+    return {
+        int(row[1]): {
+            "operation_id": int(row[0]),
+            "operation_type": str(row[2]),
+            "attempt_number": int(row[3]),
+            "ords_job_id": int(row[4]) if row[4] is not None else None,
+            "local_outcome": str(row[5]) if row[5] is not None else None,
+            "registration_error_message": str(row[6]) if row[6] is not None else None,
+        }
+        for row in cursor.fetchall()
+    }
+
+
+def _with_ords_operation_statuses(jobs: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Apply the same authoritative operation-state model as the TTÜ project."""
+    for job in jobs:
+        operation = job.get("background_operation")
+        if not isinstance(operation, dict):
+            continue
+        ords_job_id = operation.get("ords_job_id")
+        if ords_job_id is not None:
+            try:
+                operation["status"] = str(_ords_client().job_status(int(ords_job_id)).get("status") or "UNKNOWN")
+            except OrdsError:
+                operation["status"] = "UNAVAILABLE"
+        elif operation.get("registration_error_message"):
+            operation["status"] = "REGISTRATION_ERROR"
+        elif operation.get("local_outcome") == "SUCCEEDED":
+            operation["status"] = "MANUAL_OK"
+        else:
+            operation["status"] = "NOT_REGISTERED"
+    return jobs
+
+
 def _require_process(cursor, process_id: int) -> None:
     cursor.execute("SELECT 1 FROM processes WHERE id = :id AND end_date IS NULL", {"id": process_id})
     if cursor.fetchone() is None:
@@ -2319,6 +2450,64 @@ def _insert_assets(cursor, media_id: int, assets: list[dict[str, str]]) -> None:
                VALUES (:media_id, :asset_type, :url, :version)""",
             {"media_id": media_id, "asset_type": asset_type.upper(), "url": url, "version": asset.get("version")},
         )
+
+
+def _insert_background_operation(cursor, process_id: int) -> tuple[int, str]:
+    operation_var = cursor.var(int)
+    public_id = str(uuid.uuid4())
+    idempotency_key = f"err_video_to_text:diarization:{public_id}"
+    cursor.execute(
+        """INSERT INTO background_operations
+               (public_id, process_id, previous_operation_id, operation_type,
+                attempt_number, idempotency_key)
+           VALUES (:public_id, :process_id, NULL, 'diarization', 1, :idempotency_key)
+           RETURNING operation_id INTO :operation_id""",
+        {
+            "public_id": public_id,
+            "process_id": process_id,
+            "idempotency_key": idempotency_key,
+            "operation_id": operation_var,
+        },
+    )
+    return int(operation_var.getvalue()[0]), idempotency_key
+
+
+def _set_operation_registered(operation_id: int, ords_job_id: int) -> None:
+    with connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """UPDATE background_operations
+                  SET ords_job_id = :ords_job_id,
+                      ords_registered_at = SYSTIMESTAMP,
+                      registration_error_code = NULL,
+                      registration_error_message = NULL,
+                      last_updated = SYSTIMESTAMP
+                WHERE operation_id = :operation_id AND end_date IS NULL
+                  AND (ords_job_id IS NULL OR ords_job_id = :ords_job_id)""",
+            {"operation_id": operation_id, "ords_job_id": ords_job_id},
+        )
+        if cursor.rowcount != 1:
+            conn.rollback()
+            raise RuntimeError("Background operation has a conflicting ORDS job ID")
+        conn.commit()
+
+
+def _set_registration_error(operation_id: int, code: str, message: str) -> None:
+    with connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """UPDATE background_operations
+                  SET registration_error_code = :error_code,
+                      registration_error_message = :error_message,
+                      last_updated = SYSTIMESTAMP
+                WHERE operation_id = :operation_id AND end_date IS NULL""",
+            {
+                "operation_id": operation_id,
+                "error_code": code[:100],
+                "error_message": message[:2000],
+            },
+        )
+        conn.commit()
 
 
 def _parse_date(value: str | None):

@@ -2,6 +2,7 @@ const API_BASE = window.ERR2TEXT_API_BASE || "/api/v1";
 const POLL_INTERVAL_MS = 30_000;
 const STOP_POLL_STATUSES = new Set(["WAITING_FOR_PARTICIPANTS", "IN_REVIEW", "FINISHED", "CANCELLED"]);
 const PROCESSING_STATUSES = new Set(["DOWNLOADING", "DIARIZING", "MATERIALIZING_AUTOMATIC_DRAFT", "WAITING_FOR_RESULT"]);
+const ORDS_PROCESSING_STATUSES = new Set(["QUEUED", "CLAIMED", "RUNNING", "UNKNOWN"]);
 
 const state = {
   resolved: null,
@@ -163,6 +164,22 @@ function statusLabel(status) {
   return translate(`status.${status}`) || status;
 }
 
+function displayStatus(job) {
+  return job.background_operation?.status || job.status;
+}
+
+function renderStatusBadge(element, job) {
+  const status = displayStatus(job);
+  // ORDS-operation rows use TTÜ's exact display convention: type + authority state.
+  element.textContent = job.background_operation
+    ? `${job.background_operation.operation_type}: ${status}`
+    : statusLabel(status);
+  element.classList.toggle("is-success", status === "FINISHED" || status === "SUCCEEDED");
+  element.classList.toggle("is-pending", ["WAITING_FOR_PARTICIPANTS", "IN_REVIEW", "HELD"].includes(status));
+  element.classList.toggle("is-error", ["CANCELLED", "FAILED", "INTERRUPTED", "REMOVED", "REGISTRATION_ERROR"].includes(status));
+  element.classList.toggle("is-processing", PROCESSING_STATUSES.has(status) || ORDS_PROCESSING_STATUSES.has(status));
+}
+
 function runResultLabel(status) {
   return status ? (translate(`run.${status}`) || status) : "";
 }
@@ -173,12 +190,7 @@ function renderJob(job) {
   $("#jobCard").classList.remove("hidden");
   $("#jobId").textContent = `#${job.id}`;
   const status = $("#jobStatus");
-  status.textContent = statusLabel(job.status);
-  status.classList.toggle("is-success", false);
-  status.classList.toggle("is-pending", ["WAITING_FOR_PARTICIPANTS", "IN_REVIEW"].includes(job.status));
-  status.classList.toggle("is-success", job.status === "FINISHED");
-  status.classList.toggle("is-error", job.status === "CANCELLED");
-  status.classList.toggle("is-processing", PROCESSING_STATUSES.has(job.status));
+  renderStatusBadge(status, job);
   status.classList.toggle("is-stale", state.staleJobStatus);
   $("#jobSubmitted").textContent = formatLocalDate(job.submitted_at);
   $("#jobUpdated").textContent = formatLocalDate(job.resolved_at);
@@ -186,7 +198,7 @@ function renderJob(job) {
   error.textContent = job.error_message || "";
   error.classList.toggle("hidden", !job.error_message);
   $("#jobProgressNote").textContent = STOP_POLL_STATUSES.has(job.status)
-    ? statusLabel(job.status)
+    ? statusLabel(displayStatus(job))
     : translate("job.polling");
 }
 
@@ -1654,12 +1666,7 @@ function renderHistory() {
     }
     const status = document.createElement("span");
     status.className = "status-badge";
-    status.textContent = statusLabel(job.status);
-    status.classList.toggle("is-success", false);
-    status.classList.toggle("is-pending", ["WAITING_FOR_PARTICIPANTS", "IN_REVIEW"].includes(job.status));
-    status.classList.toggle("is-success", job.status === "FINISHED");
-    status.classList.toggle("is-error", job.status === "CANCELLED");
-    status.classList.toggle("is-processing", PROCESSING_STATUSES.has(job.status));
+    renderStatusBadge(status, job);
     status.classList.toggle("is-stale", state.staleHistoryJobIds.has(job.id));
     const statusColumn = document.createElement("div");
     statusColumn.className = "history-status-column";
@@ -1747,29 +1754,10 @@ function renderHistory() {
 
 function renderDiarizationNotice() {
   const notice = $("#diarizationNotice");
-  const queue = state.queueStatus;
-  if (!queue || !state.historyJobs.length) {
-    notice.classList.add("hidden");
-    notice.replaceChildren();
-    return;
-  }
-  const running = Number(queue.running_diarizations) || 0;
-  const maximum = Number(queue.max_concurrent_diarizations) || 1;
-  const firstLine = document.createElement("div");
-  firstLine.append(document.createTextNode(translate("history.diarization_running")));
-  const runningValue = document.createElement("strong");
-  runningValue.textContent = String(running);
-  firstLine.append(runningValue, document.createTextNode(translate("history.diarization_limit")));
-  const maximumValue = document.createElement("strong");
-  maximumValue.textContent = String(maximum);
-  firstLine.append(maximumValue, document.createTextNode(")."));
-  notice.replaceChildren(firstLine);
-  if (running === 1) {
-    const secondLine = document.createElement("div");
-    secondLine.textContent = translate("history.diarization_queue");
-    notice.appendChild(secondLine);
-  }
-  notice.classList.remove("hidden");
+  // MVP3 queue state is authoritative in the shared ORDS service. The old
+  // local concurrency counter must not be presented as a queue status.
+  notice.classList.add("hidden");
+  notice.replaceChildren();
 }
 
 function appendInfoRow(container, label, value) {
@@ -1844,7 +1832,10 @@ async function showJobHistory(jobId) {
         : (next ? new Date(next.event_at) : new Date());
       const duration = formatDuration(end - start);
       const row = document.createElement("tr");
-      [statusLabel(event.status), formatLocalDate(event.event_at), duration, runResultLabel(event.run_status)].forEach((value) => {
+      const operationStatus = event.operation_type
+        ? `${event.operation_type}: ${event.status}`
+        : statusLabel(event.status);
+      [operationStatus, formatLocalDate(event.event_at), duration, runResultLabel(event.run_status)].forEach((value) => {
         const cell = document.createElement("td");
         cell.textContent = value;
         row.appendChild(cell);
@@ -1881,30 +1872,24 @@ async function loadHistoryArtifacts(job, parent) {
 }
 
 async function loadHistory() {
-  const [jobsResult, queueResult] = await Promise.allSettled([
-    request("/jobs"),
-    request("/queue-status"),
-  ]);
+  const [jobsResult] = await Promise.allSettled([request("/jobs")]);
   if (jobsResult.status === "rejected") throw jobsResult.reason;
   state.historyJobs = jobsResult.value;
-  state.queueStatus = queueResult.status === "fulfilled" ? queueResult.value : null;
+  state.queueStatus = null;
   state.staleHistoryJobIds.clear();
   renderHistory();
   scheduleHistoryPolling();
 }
 
 async function refreshActiveHistory() {
-  const [jobsResult, queueResult] = await Promise.allSettled([
-    request("/jobs"),
-    request("/queue-status"),
-  ]);
+  const [jobsResult] = await Promise.allSettled([request("/jobs")]);
   if (jobsResult.status === "fulfilled") {
     state.historyJobs = jobsResult.value;
     state.staleHistoryJobIds.clear();
   } else {
     state.historyJobs.forEach((job) => state.staleHistoryJobIds.add(job.id));
   }
-  state.queueStatus = queueResult.status === "fulfilled" ? queueResult.value : null;
+  state.queueStatus = null;
   renderHistory();
   scheduleHistoryPolling();
 }

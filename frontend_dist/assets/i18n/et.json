@@ -81,7 +81,7 @@
   "errors.title": "URL-i viga",
   "errors.ok": "OK",
   "errors.url_required": "Sisesta URL.",
-  "status.QUEUED": "Järjekord",
+  "status.QUEUED": "Järjekorras",
   "status.DOWNLOADING": "Meedia hankimine",
   "status.DIARIZING": "Kõnelejate eristamine",
   "status.MATERIALIZING_AUTOMATIC_DRAFT": "Automaatse drafti koostamine",
