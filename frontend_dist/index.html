@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="stylesheet" href="./assets/app.css?v=32" />
+    <link rel="stylesheet" href="./assets/app.css?v=44" />
     <title>ERR2TEXT</title>
   </head>
   <body>
@@ -95,6 +95,29 @@
       <div id="artifactViewerMessage" class="message" role="status" aria-live="polite"></div>
       <div id="artifactViewerContent" class="artifact-viewer-content"></div>
     </dialog>
+    <dialog id="transcriptViewer" class="transcript-dialog" aria-modal="true">
+      <div class="transcript-dialog-head">
+        <h2 data-i18n="viewer.title"></h2>
+        <div class="transcript-dialog-controls">
+          <label class="version-selector" for="transcriptVersionSelect">
+            <span data-i18n="viewer.version"></span>
+            <select id="transcriptVersionSelect"></select>
+          </label>
+          <button id="transcriptViewerClose" class="secondary-button" type="button" data-i18n="artifacts.close"></button>
+        </div>
+      </div>
+      <div id="transcriptVideoContainer" class="transcript-video">
+        <div class="transcript-video-toolbar">
+          <button id="closeTranscriptVideo" class="secondary-button" type="button" data-i18n="viewer.close_video"></button>
+          <button id="followTranscript" class="secondary-button" type="button" data-i18n="viewer.follow_transcript" disabled></button>
+        </div>
+        <div class="transcript-video-grid is-single-video">
+          <video id="transcriptVideo" controls preload="metadata" playsinline></video>
+        </div>
+      </div>
+      <div id="transcriptViewerMessage" class="message" role="status" aria-live="polite"></div>
+      <div id="transcriptContent" class="markdown-viewer"></div>
+    </dialog>
     <dialog id="errorViewer" class="error-viewer" aria-modal="true">
       <h2 data-i18n="errors.title"></h2>
       <p id="errorViewerMessage"></p>
@@ -151,6 +174,6 @@
       </div>
     </dialog>
     <script src="./assets/vendor/hls-1.6.13.min.js" defer></script>
-    <script src="./assets/app.js?v=90" defer></script>
+    <script src="./assets/app.js?v=98" defer></script>
   </body>
 </html>

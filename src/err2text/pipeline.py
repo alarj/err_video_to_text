@@ -16,7 +16,7 @@ from err2text.models import MediaItem, RunContext, UrlType
 from err2text.names.review import build_review
 from err2text.output import write_json, write_markdown
 from err2text.resolver.classify import classify_url
-from err2text.resolver.article import resolve_err_article, vtt_url_for
+from err2text.resolver.article import article_vtt_url_for, resolve_err_article_sources
 from err2text.subtitles.normalize import decode_vtt
 from err2text.subtitles.parser import parse_vtt
 
@@ -49,11 +49,12 @@ def prepare_media(context: RunContext, config: Settings, video_index: int | None
     output_dir.mkdir(parents=True, exist_ok=True)
     url_type = classify_url(context.source_url)
     article_versions: dict[str, str] = {}
+    article_vtt_urls: dict[str, str] = {}
     metadata = ytdlp_metadata(context.source_url)
     if url_type == UrlType.ERR_ARTICLE:
         items, article_versions = err_vod_items_from_metadata(metadata)
         if not items:
-            items, article_versions = resolve_err_article(context.source_url)
+            items, article_versions, article_vtt_urls = resolve_err_article_sources(context.source_url)
     else:
         items = media_items(metadata)
     resolver = {"schema_version": "1.0", "source_url": context.source_url, "url_type": url_type,
@@ -70,7 +71,7 @@ def prepare_media(context: RunContext, config: Settings, video_index: int | None
     resolver["selected_media"] = selected.__dict__
     selected_url = selected.canonical_url or context.source_url
     if url_type == UrlType.ERR_ARTICLE:
-        vtt_url = vtt_url_for(selected, article_versions[selected.vod_id or ""])
+        vtt_url = article_vtt_url_for(selected, article_versions, article_vtt_urls)
     else:
         selected_metadata = metadata if len(items) == 1 else ytdlp_metadata(selected_url)
         vtt_url = subtitle_url(selected_metadata)

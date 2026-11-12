@@ -469,6 +469,15 @@ loodud uutele taustatoimingutele. Täpne rakendusleping on dokumendis
 Säilitatud korpus, semantiline otsing ja RAG jäävad võimalikku hilisemasse
 etappi; need ei kuulu MVP3-sse.
 
+### MVP4 — videoga transkriptsioonivaade
+
+Transkriptsiooni olemasolul on töö juures „Vaade”. Modaali ülaosas on ERR-i või
+Jupiteri otsevoog ning all transkriptsioon; valida saab aktiivsete versioonide
+vahel, vaikimisi on viimane. Vaade ei käivita videot automaatselt. Video
+käivitub kasutaja Play-nupust või ajamärgilt, ajamärk sünkroonib teksti ning
+„Jälgi teksti” taastab pärast käsitsi kerimist automaatse jälgimise. Brauser
+mäletab töö viimast vaatamiskohta. Videofaili ei laadita alla ega talletata.
+
 ### Ühised andme- ja juurutuspõhimõtted alates MVP2-st
 
 Uut andmebaasi ei lisata. Kasutatakse serveris juba olevat Oracle Database 26ai Always Free andmebaasi, kuid sellele rakendusele luuakse rangelt eraldi schema. Oracle’i skeemis hoitakse kasutajaid, transkriptsioonitöid, allikaid, väljundite metaandmeid, tegevuslogi ja API-võtmete räsi. Mahukaid audio-, VTT- ja JSON-faile ei salvestata andmebaasi; andmebaasis hoitakse nende viiteid, kontrollsummasid ja metaandmeid. Hilisemas RAG-etapis kasutatakse sama Oracle’i AI Vector Searchi nii embeddingute kui relatsioonilise metadata hübriidotsinguks.

@@ -85,6 +85,7 @@
 - [`docs/err2text_bpmn.drawio`](err2text_bpmn.drawio)
 - [`docs/err2text_bpmn.drawio.png`](err2text_bpmn.drawio.png)
 - [`docs/mvp3_ords_queue.md`](mvp3_ords_queue.md)
+- [`docs/mvp4_videovaade.md`](mvp4_videovaade.md)
 - [`db/erd.md`](../db/erd.md)
 - [`db/schema/001_core_schema.sql`](../db/schema/001_core_schema.sql)
 - [`db/schema/008_mvp3_ords_queue.sql`](../db/schema/008_mvp3_ords_queue.sql)
