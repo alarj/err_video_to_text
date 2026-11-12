@@ -165,13 +165,21 @@ function statusLabel(status) {
 }
 
 function displayStatus(job) {
-  return job.background_operation?.status || job.status;
+  const automaticProcessStatuses = new Set([
+    "DOWNLOADING", "DIARIZING", "MATERIALIZING_AUTOMATIC_DRAFT", "WAITING_FOR_RESULT",
+  ]);
+  return job.background_operation && automaticProcessStatuses.has(job.status)
+    ? job.background_operation.status
+    : job.status;
 }
 
 function renderStatusBadge(element, job) {
   const status = displayStatus(job);
   // ORDS-operation rows use TTÜ's exact display convention: type + authority state.
-  element.textContent = job.background_operation
+  const automaticProcessStatuses = new Set([
+    "DOWNLOADING", "DIARIZING", "MATERIALIZING_AUTOMATIC_DRAFT", "WAITING_FOR_RESULT",
+  ]);
+  element.textContent = job.background_operation && automaticProcessStatuses.has(job.status)
     ? `${job.background_operation.operation_type}: ${status}`
     : statusLabel(status);
   element.classList.toggle("is-success", status === "FINISHED" || status === "SUCCEEDED");

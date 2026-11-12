@@ -292,8 +292,8 @@ class Worker:
 def run_diarization_operation(activity: dict[str, Any]) -> None:
     process_id = int(activity["process_id"])
     activity_id = int(activity["activity_id"])
-    if activity["activity_type"] != "DIARIZING":
-        raise RuntimeError(f"Expected DIARIZING activity, got {activity['activity_type']}")
+    if activity["activity_type"] not in {"DOWNLOADING", "DIARIZING"}:
+        raise RuntimeError(f"Expected DOWNLOADING or DIARIZING activity, got {activity['activity_type']}")
     config = settings()
     output_dir = ensure_external_output(
         config.runtime_root / "outputs" / f"process-{process_id}", config
@@ -319,9 +319,42 @@ def run_diarization_operation(activity: dict[str, Any]) -> None:
         raise RuntimeError("Selected media is no longer present in resolver response")
 
     prepared = prepare_media(context, config, int(selected["index"]))
+    if activity["activity_type"] == "DOWNLOADING":
+        activity_id = transition_to_diarizing(process_id, activity_id)
     result_dir = complete_diarization(prepared, context, config)
     materializing_id = transition_to_materializing(process_id, activity_id)
     materialize_automatic_draft(process_id, materializing_id, result_dir)
+
+
+def transition_to_diarizing(process_id: int, previous_activity_id: int) -> int:
+    with connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """UPDATE activities
+                  SET finished_at = SYSTIMESTAMP, result = 'OK', last_updated = SYSTIMESTAMP
+                WHERE id = :activity_id AND process_id = :process_id AND finished_at IS NULL""",
+            {"activity_id": previous_activity_id, "process_id": process_id},
+        )
+        activity_var = cursor.var(int)
+        cursor.execute(
+            """INSERT INTO activities
+                   (process_id, previous_activity_id, activity_type, started_at, execution_started_at)
+                VALUES (:process_id, :previous_activity_id, 'DIARIZING', SYSTIMESTAMP, SYSTIMESTAMP)
+                RETURNING id INTO :activity_id""",
+            {
+                "process_id": process_id,
+                "previous_activity_id": previous_activity_id,
+                "activity_id": activity_var,
+            },
+        )
+        activity_id = int(activity_var.getvalue()[0])
+        cursor.execute(
+            """UPDATE processes SET status = 'DIARIZING', last_updated = SYSTIMESTAMP
+                WHERE id = :process_id""",
+            {"process_id": process_id},
+        )
+        conn.commit()
+        return activity_id
 
 
 def transition_to_materializing(process_id: int, previous_activity_id: int) -> int:

@@ -25,6 +25,12 @@ kehtiva ORDS-i claim'i alusel. ERR-i tabelid `processes` ja `activities`
 kirjeldavad äriprotsessi ning selle etappe, kuid ei ole järjekord.
 `execution_started_at` on ainult kohaliku etapi tegeliku alguse auditiväli.
 
+Töötlemise ajaloo vaates kuvatakse ORDS-i kaudu loodud protsessil automaatne
+`diarization` ühe ORDS-toiminguna ning sellele järgnevad kohalikud
+kasutajaetapid (näiteks osalejate ülevaatus). ORDS-ile eelnenud protsessidel
+`background_operations` kirjet ei ole ja nende olemasolev `activities` ajalugu
+kuvatakse muutmata.
+
 Rakenduses ei ole kohalikku claim-päringut, `SKIP LOCKED` põhist tööde valikut,
 eraldi samaaegsuse loendurit ega ORDS-i tõrke korral kasutatavat varujärjekorda.
 Worker töötleb korraga ühte ORDS-i antud tööd.

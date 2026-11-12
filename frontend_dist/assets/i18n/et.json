@@ -160,6 +160,9 @@
   "participants.player_unsupported": "See brauser ei toeta HLS-videot.",
   "participants.player_error": "Video laadimine ebaõnnestus.",
   "run.OK": "Õnnestus",
+  "run.SUCCEEDED": "Õnnestus",
+  "run.FAILED": "Viga",
+  "run.INTERRUPTED": "Katkestatud",
   "run.ERROR": "Viga",
   "run.CANCELLED": "Katkestatud"
 }

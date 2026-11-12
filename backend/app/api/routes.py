@@ -232,7 +232,7 @@ def create_job(request: CreateJobRequest) -> JobResponse:
                     detail="published_date is required for ORDS queue display",
                 )
 
-            status = "WAITING_FOR_RESULT" if active_parent is not None else "DIARIZING"
+            status = "WAITING_FOR_RESULT" if active_parent is not None else "DOWNLOADING"
             cursor.execute(
                 """INSERT INTO processes
                    (parent_process_id, source_id, media_item_id, status, started_at)
@@ -242,7 +242,7 @@ def create_job(request: CreateJobRequest) -> JobResponse:
                  "status": status, "process_id": process_var},
             )
             process_id = int(process_var.getvalue()[0])
-            activity_type = "WAITING_FOR_RESULT" if active_parent is not None else "DIARIZING"
+            activity_type = "WAITING_FOR_RESULT" if active_parent is not None else "DOWNLOADING"
             cursor.execute(
                 """INSERT INTO activities (process_id, activity_type, started_at)
                    VALUES (:process_id, :activity_type, SYSTIMESTAMP)""",
@@ -664,8 +664,42 @@ def get_job_events(job_id: int) -> list[dict[str, object]]:
                 "local_error_message": str(row[10]) if row[10] is not None else None,
                 "created_at": _utc_iso(row[11]),
             })
+        if not operations:
+            # Processes created before the ORDS migration deliberately have no
+            # background_operations row.  Their existing activities remain the
+            # authoritative processing history.
+            cursor.execute(
+                """SELECT id, activity_type, started_at, finished_at, result,
+                          error_code, error_message
+                     FROM activities
+                    WHERE process_id = :process_id AND end_date IS NULL
+                    ORDER BY started_at, id""",
+                {"process_id": job_id},
+            )
+            return [{
+                "id": row[0], "status": row[1], "event_type": row[1],
+                "detail": row[6] if row[6] else (f"Tulemus: {row[4]}" if row[4] else "Tegevus käib."),
+                "event_at": _utc_iso(row[2]), "finished_at": _utc_iso(row[3]),
+                "run_status": row[4], "result": row[4], "error_code": row[5],
+            } for row in cursor.fetchall()]
+        # ORDS is the execution authority, but activities remain the complete
+        # ERR processing history.  Do not hide automatic pipeline activities.
+        cursor.execute(
+            """SELECT id, activity_type, started_at, finished_at, result,
+                      error_code, error_message
+                 FROM activities
+                WHERE process_id = :process_id AND end_date IS NULL
+                ORDER BY started_at, id""",
+            {"process_id": job_id},
+        )
+        manual_events = [{
+            "id": row[0], "status": row[1], "event_type": row[1],
+            "detail": row[6] if row[6] else (f"Tulemus: {row[4]}" if row[4] else "Tegevus käib."),
+            "event_at": _utc_iso(row[2]), "finished_at": _utc_iso(row[3]),
+            "run_status": row[4], "result": row[4], "error_code": row[5],
+        } for row in cursor.fetchall()]
     _with_ords_operation_statuses([{"background_operation": operation} for operation in operations])
-    return [{
+    operation_events = [{
         "id": operation["operation_id"],
         "operation_type": operation["operation_type"],
         "status": operation["status"],
@@ -674,6 +708,7 @@ def get_job_events(job_id: int) -> list[dict[str, object]]:
         "run_status": operation["local_outcome"],
         "detail": operation["local_error_message"] or operation["registration_error_message"] or "",
     } for operation in operations]
+    return sorted(operation_events + manual_events, key=lambda event: event["event_at"] or "")
 
 
 @router.get("/jobs/{job_id}/artifacts")
