@@ -1,27 +1,18 @@
-# ERR2TEXT MVP4
+# ERR2TEXT
 
-Projekti tööreeglid ja tõeallikate register on dokumendis
-[`docs/agents.md`](docs/agents.md).
+Veebirakendus, mis seob ERR-i savestatud omasaadete olemasoleva VTT teksti audio-põhise
+kõnelejate tuvastamisega (diarization). 
+Rakendus ei tee uut  kõnetuvastust ega automaatselt hääle järgi inimeste nimede määramist. 
+Kasutajaliideses on eraldi funktsionaalsus, mis
+* võimaldab inimesel määrata osalejad;
+* võimaldab inimesel kahtlased kohad üle vaadata ja otsustada teksti tegelik ütleja.
+Eraldi on katsetatud erinevaid masinõppe mudeleid tuvastamaks iniese sekkumise vajalikkust.
 
-Protsessiandmete analüüsiks või mudeli õpetamiseks kasutamise luba kontrolli
-enne andmete kasutamist registrist
-[`docs/evaluation_data.md`](docs/evaluation_data.md). Registri `Jah`/`Ei`
-otsus kehtib ainult seal nimetatud protsessile või kandidaadivahemikule.
+## MVP3 
 
-Kursusetöö dokumendid, manifestid ja Gititavad analüüsi-/testskriptid on
-kataloogis [`docs/kursusetoo/`](docs/kursusetoo/README.md). Käitusaegsed CSV-d
-ja mudelikatsete väljundid jäävad `log/` kataloogi ning Git neid ei jälgi.
-
-Containeris töötav CLI, mis seob ERR-i olemasoleva VTT teksti audio-põhise
-kõnelejate diarization'iga. MVP1 ei tee uut automaatset kõnetuvastust ega
-automaatselt hääle järgi inimeste nimede määramist. MVP1.2 lisab eraldi
-Whisperi kontrolltöölise, mis kuulab üle ainult kahtlased lõigud ega muuda
-põhitranskriptsiooni automaatselt. MVP1.3 lisab sellest eraldi fixed-VTT
-forced-alignmenti katse inimese märgitud segalõikudele.
-
-MVP3 viib veebirakenduse taustatööd kesksele ORDS-i järjekorrale. ORDS on
+MVP3 viis veebirakenduse taustatööd süsteemi kesksele järjekorrale. See on
 ainus autoriteetne järjekord; Oracle'i `background_operations` säilitab ainult
-ERR-i protsessi ja ORDS-i töö seose ning kohaliku täitmise tulemuse. Eraldi
+ERR-i protsessi ja keskse järjekorra töö seose ning kohaliku täitmise tulemuse. Eraldi
 kohalikku järjekorda ega selle varumehhanismi ei ole.
 
 MVP3 täpne leping ja kasutuselevõtu järjekord on dokumendis
@@ -271,6 +262,20 @@ diarization'i sõltuvus; selle mudel nõuab Hugging Face'i tokenit `.env` failis
 `.env`-is lukustatud `FASTER_WHISPER_VERSION` on ainult `whisper-review`
 image'i sõltuvus ning selle mitmekeelne `medium` mudel on lukustatud Hugging
 Face'i revisjonile.
+
+## Projekti reeglid ja materjalid
+
+Projekti tööreeglid ja tõeallikate register on dokumendis
+[`docs/agents.md`](docs/agents.md).
+
+Protsessiandmete analüüsiks või mudeli õpetamiseks kasutamise luba kontrolli
+enne andmete kasutamist registrist
+[`docs/evaluation_data.md`](docs/evaluation_data.md). Registri `Jah`/`Ei`
+otsus kehtib ainult seal nimetatud protsessile või kandidaadivahemikule.
+
+Kursusetöö dokumendid, manifestid ja Gititavad analüüsi-/testskriptid on
+kataloogis [`docs/kursusetoo/`](docs/kursusetoo/README.md). Käitusaegsed CSV-d
+ja mudelikatsete väljundid jäävad `log/` kataloogi ning Git neid ei jälgi.
 
 ## Ohutus ja andmed
 
