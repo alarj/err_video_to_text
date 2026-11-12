@@ -10,6 +10,8 @@ erDiagram
     MEDIA_ITEMS ||--o{ PROCESSES : processes
     PROCESSES ||--o{ PROCESSES : parent_process
     PROCESSES ||--o{ ACTIVITIES : contains
+    PROCESSES ||--o{ BACKGROUND_OPERATIONS : schedules
+    BACKGROUND_OPERATIONS ||--o{ BACKGROUND_OPERATIONS : previous_operation
     ACTIVITIES ||--o{ ACTIVITIES : previous_activity
     ACTIVITIES ||--o{ ACTIVITY_ARTIFACTS : produces
     ARTIFACTS ||--o{ ACTIVITY_ARTIFACTS : linked
@@ -76,6 +78,22 @@ erDiagram
         TIMESTAMP execution_started_at
         VARCHAR2 error_code
         VARCHAR2 error_message
+    }
+    BACKGROUND_OPERATIONS {
+        NUMBER operation_id PK
+        VARCHAR2 public_id
+        NUMBER process_id FK
+        NUMBER previous_operation_id FK
+        VARCHAR2 operation_type
+        NUMBER attempt_number
+        VARCHAR2 idempotency_key
+        NUMBER ords_job_id
+        VARCHAR2 registration_error_code
+        TIMESTAMP ords_registered_at
+        TIMESTAMP local_started_at
+        TIMESTAMP local_completed_at
+        VARCHAR2 local_outcome
+        VARCHAR2 local_error_code
     }
     ARTIFACTS {
         NUMBER id PK
@@ -189,14 +207,16 @@ erDiagram
   tulemused on `OK`, `ERROR` ja `CANCELLED`. Pooleli tegevusel on mõlemad
   väärtused `NULL`.
 - Taustal käivitataval tegevusel võib olla tehniline
-  `execution_started_at`. See näitab, et worker on tegevuse endale hõivanud;
-  see ei ole tegevuse äriline staatus ega tulemus.
-- Diariseerimise samaaegsuse ülempiir tuleb konfiguratsioonist
-  `ERR2TEXT_MAX_CONCURRENT_DIARIZATIONS`; vaikimisi on väärtus `1`. Käimasolevaks
-  diariseerimiseks loetakse tegevus, mille `activity_type` on `DIARIZING`,
-  `execution_started_at` ei ole `NULL` ja `finished_at` on `NULL`.
-- Worker hõivab tegevuse atomaarse andmebaasitehinguga. Hõivamata tegevust ei
-  tohi teine worker samal ajal käivitada.
+  `execution_started_at`. MVP3-s näitab see ainult kohaliku etapi tegelikku
+  algust; see ei anna käivitamisõigust ega moodusta järjekorda.
+- ORDS on MVP3 ainus autoriteetne taustatööde järjekord. Worker käivitab töö
+  ainult ORDS-i claim'i alusel ja töötleb korraga ühte claim'itud tööd.
+- `background_operations` seob kohaliku protsessi ORDS-i tööga ning säilitab
+  registreerimise ja kohaliku adapteri auditi. Tabeli ridu ei claim'ita
+  kohalikult ja `activities` päring ei ole järjekord.
+- Üks `diarization` taustatoiming sisaldab audio ja VTT allalaadimist,
+  valideerimist, diariseerimist, liitmist ja `AUTOMATIC_DRAFT`
+  materialiseerimist. Eraldi `DOWNLOADING` taustatoimingut MVP3-s ei looda.
 - Eelmise tegevuse lõpetamine, uue tegevuse lisamine ja protsessi staatuse
   uuendamine toimuvad ühe lühikese andmebaasitransaktsiooni sees.
 - Pika tegevuse, nagu diariseerimise või kasutaja ülevaatuse ajal, ei hoita
@@ -217,9 +237,32 @@ tegevuse puhul `NULL`.
 `source_segment_id` viitab algse automaatse drafti segmendile, kui segment on
 sellest tuletatud; algse segmendi puhul on väärtus `NULL`.
 
-MVP2.2 tegevuste lubatud tüübid on `DOWNLOADING`, `DIARIZING`,
+MVP2.2 ajaloolised tegevuste tüübid on `DOWNLOADING`, `DIARIZING`,
 `MATERIALIZING_AUTOMATIC_DRAFT`, `WAITING_FOR_PARTICIPANTS`, `IN_REVIEW` ja
 `WAITING_FOR_RESULT`.
+
+MVP3 uue protsessi esimene tegevus on `DIARIZING`; `DOWNLOADING` jääb ainult
+varasemate protsesside ajalooliseks väärtuseks. ORDS-i üks `diarization` töö
+võib selle sees viia protsessi tehnilise materialiseerimisetapi kaudu
+`WAITING_FOR_PARTICIPANTS` olekusse.
+
+## Keskse järjekorra seos
+
+`background_operations.operation_id` on ORDS-i `application_job_id`.
+`ords_job_id` on keskse järjekorra tagastatud unikaalne töö ID ja
+`idempotency_key` tagab registreerimise korduskindluse. `operation_type`
+vastab ORDS-i `job_type_code` väärtusele; MVP3-s on lubatud ainult
+`diarization`.
+
+`previous_operation_id` peab viitama sama `process_id` toimingule. Esimesel
+diariseerimisel on see `NULL`. Kui kasutaja ülevaatusele lisatakse hiljem uus
+automaatne etapp, saab see eraldi toimingu ja ORDS-i töö ning võib viidata
+eelmisele toimingule.
+
+`local_started_at`, `local_completed_at`, `local_outcome` ja kohalikud
+veaväljad kirjeldavad adapteri tegelikku täitmist, mitte järjekorra olekut.
+ORDS-i autoriteetset staatust kohalik tabel ei dubleeri. Olemasolevatele
+saadetele ja MVP2 protsessidele migratsioon tagantjärele toiminguid ei loo.
 
 ## Seotud protsesside tehniline reegel
 

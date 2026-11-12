@@ -271,6 +271,11 @@ MVP 1.3 ei lahenda B-, C- ega D-tüüpi vigu: Pyannote’i kõikumist või nihke
 
 ### MVP2 — teenuse tuum, asünkroonsed tööd ja veebiliides
 
+Selle jaotise kohalik Oracle'i tegevusjärjekord kirjeldab MVP2 ajaloolist
+teostust. MVP3-s asendab selle täielikult jaotis „MVP3 — keskne ORDS-i
+tööjärjekord”. MVP2 äriprotsessi tegevused säilivad, kuid need ei anna enam
+workerile käivitamisõigust.
+
 MVP2 algab ainult siis, kui MVP tehniline tuum on testsaate põhjal piisavalt toimiv. Eesmärk on muuta CLI-tuum hallatavaks teenuseks ning anda sellele sama töövoogu kasutav veebiliides. Veebiliides ei ole CLI-st eraldi töötlustee: nii brauser kui hilisemad AI-agendid kasutavad sama API-d, tööjärjekorda, Oracle’i metadata mudelit ja väliseid väljundfaile.
 
 MVP2 skoobis on:
@@ -416,11 +421,53 @@ Autenditud kasutaja saab luua unikaalse API-võtme. Võtme toorväärtust näida
 
 MVP2.4 skoobis on ka kasutajategevuse audit: kes, mida, millal ja kas veebist või API kaudu töö algatas. Enne autentimisega etappi tuleb kinnitada ERR-i sisu ja tuletatud transkriptide kasutusõigus, privaatsustingimused ning teenuse kasutustingimused.
 
-### MVP3 — säilitatud korpus ja RAG
+### MVP3 — keskne ORDS-i tööjärjekord
 
-MVP3 lisab juba edukalt digitaliseeritud saadete säilitamise, versioonimise ja semantilise otsingu/RAG-i. See algab alles siis, kui transkriptide kvaliteet, JSON-skeem, töötlusversioonide tähendus ja korduvkasutuse reeglid on kinnitatud.
+MVP3 eemaldab ERR-i rakendusest kohaliku taustatööde järjekorra. ORDS on ainus
+autoriteetne järjekord ja ainus käivitamisloa allikas. `activities.status`,
+`activities.execution_started_at` ega lõpetamata tegevuste päring ei tohi olla
+workeri claim-mehhanism. Kohalik `background_operations` tabel ei ole järjekord:
+see seob äriprotsessi ORDS-i tööga ning talletab registreerimise ja kohaliku
+adapteri täitmise auditi.
 
-RAG ei ole CLI- ega teenuse-tuuma sõltuvus. `Double_Check_AI` projekti ingest/retrieval põhimõtteid võib kasutada eeskujuna, kuid embedding-mudel otsustatakse selle etapi alguses. Vektorid, transkriptsioonilõigud ja metadata salvestatakse Oracle Database 26ai AI Vector Searchi peale; PostgreSQL-i ega eraldi vektorandmebaasi ei lisata.
+Uue kinnitatud saate jaoks luuakse üks `diarization` toiming. Sama ORDS-i töö
+sees hangitakse audio ja VTT, kontrollitakse ja normaliseeritakse VTT,
+diariseeritakse audio, liidetakse kõnelejad tekstiga ning materialiseeritakse
+`AUTOMATIC_DRAFT`. Eraldi `DOWNLOADING` taustatööd ei ole. Töö loetakse
+õnnestunuks, kui esialgne diariseeritud versioon ja ülevaatuseks vajalikud
+andmed on valmis. Järgnevad `WAITING_FOR_PARTICIPANTS` ja `IN_REVIEW` on
+kasutaja tegevused ega kuulu selle ORDS-i töö sisse.
+
+Pärast kasutaja ülevaatust käivitatav automaatne tegevus ei ole veel
+otsustatud. Kui see hiljem lisatakse, peab see olema uus kohalik
+`background_operations` kirje ja uus ORDS-i töö, mitte diariseerimistöö jätk
+ega kohalik järjekord. Finaliseerimise nupp ei kuulu MVP3 järjekorramuudatusse.
+
+API loob `processes`, esimese `DIARIZING` tegevuse ja
+`background_operations` kirje ühes kohalikus tehingus ning registreerib töö
+seejärel muutumatu idempotentsusvõtmega ORDS-is. ORDS-i `application_job_id`
+on kohaliku toimingu `operation_id`; `parameters.process_id` on tehniline
+kontrollväli. Informatiivne `parameters.media_title` peab sisaldama saate
+tegelikku kuupäeva kujul `YYYY-MM-DD — pealkiri` ning
+`media_published_date` säilitab sama kuupäeva ISO 8601 kujul. Worker leiab
+autoriteetse töökonteksti alati kohaliku `operation_id` ja `process_id` abil,
+mitte informatiivse pealkirja järgi.
+
+Worker kutsub käivitumisel `/worker/startup`, küsib töö `/worker/claim`
+kaudu, saadab `/start`, heartbeat'i ja `/complete`. Korraga täidab üks worker
+ühte claim'itud tööd. Kui ORDS annab töö, mille aktiivset kohalikku toimingut
+enam ei ole, lõpetab worker selle tulemusega `INTERRUPTED`, `exit_code: 0` ja
+`APPLICATION_OPERATION_NOT_FOUND`. Vigane tehniline identifikaator või vale
+töötüüp lõpeb `FAILED` ning selge põhjuskoodiga.
+
+MVP3 ei registreeri vanu olemasolevaid saateid ega pooleliolevaid MVP2
+tegevusi ORDS-i tagantjärele. Keskne järjekord kehtib ainult pärast migratsiooni
+loodud uutele taustatoimingutele. Täpne rakendusleping on dokumendis
+[`mvp3_ords_queue.md`](mvp3_ords_queue.md) ja keskse API leping failis
+`/home/ubuntu/projektid/jenkins/docs/api.md`.
+
+Säilitatud korpus, semantiline otsing ja RAG jäävad võimalikku hilisemasse
+etappi; need ei kuulu MVP3-sse.
 
 ### Ühised andme- ja juurutuspõhimõtted alates MVP2-st
 
@@ -434,7 +481,11 @@ Uut andmebaasi ei lisata. Kasutatakse serveris juba olevat Oracle Database 26ai 
 - Brauser teisendab kuvatavad ajad kasutaja lokaalsesse ajavööndisse.
 - Äriloogika ja ajalised võrdlused lähtuvad UTC-ajateljest.
 
-Oracle’i kasutamine ORDS REST-vahekihi kaudu ei ole nõue. FastAPI ja worker võivad kasutada eraldi skeemiga Oracle’i otse `python-oracledb` abil; ORDS on ainult võimalik alternatiiv. Valitud lahendus peab kasutama ühenduste pooli, `.env`-põhiseid saladusi, migratsioone ning väikseimate õiguste põhimõtet. Andmebaas ei ole kunagi brauserile avalik.
+Rakenduse äriandmeid loevad FastAPI ja worker endiselt ERR-i eraldi Oracle'i
+skeemist `python-oracledb` abil. Taustatööde järjekorra API on aga MVP3-s
+kohustuslik keskne ORDS-i teenus ja ainus tööde käivitamise autoriteet. Mõlemad
+ühendused kasutavad `.env`-põhiseid saladusi ning väikseimate õiguste
+põhimõtet. Kumbki andmebaasiliides ei ole brauserile avalik.
 
 ## Tehniline lähtekoht ja põhjendused
 

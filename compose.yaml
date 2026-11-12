@@ -46,6 +46,7 @@ services:
     user: "${ERR2TEXT_UID:?Set ERR2TEXT_UID in .env}:${ERR2TEXT_GID:?Set ERR2TEXT_GID in .env}"
     cpus: ${ERR2TEXT_WORKER_CPUS:?Set ERR2TEXT_WORKER_CPUS in .env}
     entrypoint: ["python", "backend/worker.py"]
+    restart: unless-stopped
 
   err2text:
     build:
