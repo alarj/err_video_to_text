@@ -302,11 +302,21 @@ def list_jobs(limit: int = Query(default=200, ge=1, le=200)) -> list[dict[str, o
                        WHERE bo.process_id = p.id AND bo.end_date IS NULL
                          AND bo.registration_error_message IS NOT NULL
                        ORDER BY bo.operation_id DESC FETCH FIRST 1 ROW ONLY))
+                     , CASE WHEN EXISTS (
+                         SELECT 1
+                           FROM transcript_versions tv
+                           JOIN transcript_artifacts ta ON ta.transcript_version_id = tv.id
+                           JOIN artifacts a ON a.id = ta.artifact_id
+                          WHERE (tv.process_id = p.id OR tv.process_id = p.parent_process_id)
+                            AND tv.end_date IS NULL AND ta.end_date IS NULL AND a.end_date IS NULL
+                            AND (a.content_type = 'text/markdown' OR a.artifact_type LIKE '%_MD'
+                                 OR a.artifact_type LIKE '%_MARKDOWN')
+                       ) THEN 1 ELSE 0 END
                  FROM processes p
                  JOIN sources src ON src.id = p.source_id
                  JOIN media_items m ON m.id = p.media_item_id
                 WHERE p.end_date IS NULL AND src.end_date IS NULL AND m.end_date IS NULL
-                ORDER BY p.created DESC, p.id DESC
+                ORDER BY src.published_date DESC NULLS LAST, p.created DESC, p.id DESC
                 FETCH FIRST :limit ROWS ONLY""",
             {"limit": limit},
         )
@@ -743,6 +753,108 @@ def get_job_artifacts(job_id: int) -> list[dict[str, object]]:
             {"process_id": job_id},
         )
         return [_artifact(row) for row in cursor.fetchall()]
+
+
+@router.get("/jobs/{job_id}/transcript-versions")
+def get_transcript_versions(job_id: int) -> dict[str, object]:
+    """Return transcript versions and the direct ERR/Jupiter media stream."""
+    with connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """SELECT m.canonical_url, p.parent_process_id
+                 FROM processes p
+                 JOIN media_items m ON m.id = p.media_item_id
+                WHERE p.id = :process_id AND p.end_date IS NULL
+                  AND m.end_date IS NULL""",
+            {"process_id": job_id},
+        )
+        process = cursor.fetchone()
+        if process is None:
+            raise HTTPException(status_code=404, detail="Process not found")
+        cursor.execute(
+            """SELECT tv.id, tv.version_number, tv.version_type, tv.status, a.id
+                 FROM transcript_versions tv
+                 JOIN processes p ON p.id = :process_id
+                 JOIN transcript_artifacts ta ON ta.transcript_version_id = tv.id
+                 JOIN artifacts a ON a.id = ta.artifact_id
+                WHERE (tv.process_id = p.id OR tv.process_id = p.parent_process_id)
+                  AND tv.end_date IS NULL AND ta.end_date IS NULL AND a.end_date IS NULL
+                  AND (a.content_type = 'text/markdown' OR a.artifact_type LIKE '%_MD'
+                       OR a.artifact_type LIKE '%_MARKDOWN')
+                ORDER BY CASE WHEN tv.process_id = p.id THEN 0 ELSE 1 END,
+                         tv.version_number DESC, tv.id DESC, a.id DESC""",
+            {"process_id": job_id},
+        )
+        versions_by_id: dict[int, dict[str, object]] = {}
+        for row in cursor.fetchall():
+            version_id = int(row[0])
+            versions_by_id.setdefault(version_id, {
+                "id": version_id, "version_number": int(row[1]),
+                "version_type": str(row[2]), "status": str(row[3]),
+                "artifact_id": int(row[4]),
+            })
+        versions = list(versions_by_id.values())
+    if not versions:
+        raise HTTPException(status_code=409, detail="No transcript version available")
+    return {"media_url": str(process[0]), "versions": versions, "default_version_id": versions[0]["id"]}
+
+
+@router.get("/jobs/{job_id}/transcript-versions/{version_id}")
+def get_transcript_version(job_id: int, version_id: int) -> dict[str, object]:
+    with connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """SELECT tv.id, tv.version_number, tv.version_type, tv.status
+                 FROM transcript_versions tv
+                 JOIN processes p ON p.id = :process_id
+                WHERE tv.id = :version_id AND tv.end_date IS NULL
+                  AND (tv.process_id = p.id OR tv.process_id = p.parent_process_id)""",
+            {"version_id": version_id, "process_id": job_id},
+        )
+        version = cursor.fetchone()
+        if version is None:
+            raise HTTPException(status_code=404, detail="Transcript version not found")
+        cursor.execute(
+            """SELECT id, segment_number, start_second, end_second, text
+                 FROM transcript_segments
+                WHERE transcript_version_id = :version_id AND end_date IS NULL
+                ORDER BY segment_number, id""",
+            {"version_id": version_id},
+        )
+        segments = [
+            {
+                "id": int(row[0]), "segment_number": int(row[1]),
+                "start_second": float(row[2]), "end_second": float(row[3]),
+                "text": str(row[4] or ""), "speakers": [],
+            }
+            for row in cursor.fetchall()
+        ]
+        segment_by_id = {item["id"]: item for item in segments}
+        cursor.execute(
+            """SELECT ss.transcript_segment_id, tp.speaker_label, p.name,
+                      ss.start_second, ss.end_second
+                 FROM transcript_segment_speakers ss
+                 JOIN transcript_participants tp ON tp.id = ss.transcript_participant_id
+                 LEFT JOIN participants_v p ON p.id = tp.participant_id
+                WHERE tp.transcript_version_id = :version_id
+                  AND ss.end_date IS NULL AND tp.end_date IS NULL
+                ORDER BY ss.transcript_segment_id, ss.start_second, ss.id""",
+            {"version_id": version_id},
+        )
+        for row in cursor.fetchall():
+            segment = segment_by_id.get(int(row[0]))
+            if segment is not None:
+                segment["speakers"].append({
+                    "speaker_label": str(row[1]),
+                    "participant_name": str(row[2]) if row[2] is not None else None,
+                    "start_second": float(row[3]),
+                    "end_second": float(row[4]),
+                })
+    return {
+        "id": int(version[0]), "version_number": int(version[1]),
+        "version_type": str(version[2]), "status": str(version[3]),
+        "segments": segments,
+    }
 
 
 @router.get("/jobs/{job_id}/review")
@@ -2157,6 +2269,7 @@ def _job_summary(row) -> dict[str, object]:
         "id": row[0], "status": row[1], "submitted_at": _utc_iso(row[2]),
         "submitted_url": row[3], "title": row[4],
         "published_date": _utc_iso(row[5]), "error_message": row[6],
+        "has_transcript": bool(row[7]),
     }
 
 

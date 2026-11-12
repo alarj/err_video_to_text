@@ -18,12 +18,13 @@ const state = {
   participantReview: null,
   participantPlayers: new Map(),
   review: null,
+  transcriptViewer: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
 
 async function loadTranslations() {
-  const response = await fetch("./assets/i18n/et.json?v=6");
+  const response = await fetch("./assets/i18n/et.json?v=7");
   if (!response.ok) throw new Error("Translations could not be loaded");
   state.translations = await response.json();
   document.querySelectorAll("[data-i18n]").forEach((element) => {
@@ -214,7 +215,7 @@ function renderEvents(events) {
   const container = $("#eventList");
   container.replaceChildren();
   events.forEach((event) => {
-    const row = document.createElement("div");
+    const row = document.createElement("p");
     row.className = "event";
     const head = document.createElement("div");
     head.className = "event-head";
@@ -662,6 +663,217 @@ function formatSeconds(value) {
   const minutes = Math.floor((seconds % 3600) / 60);
   const clock = `${String(minutes).padStart(2, "0")}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
   return hours ? `${String(hours).padStart(2, "0")}:${clock}` : clock;
+}
+
+function formatTranscriptTimestamp(value) {
+  const seconds = Math.max(0, Math.floor(Number(value) || 0));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function transcriptProgressKey(jobId) {
+  return `err2text:video-progress:${jobId}`;
+}
+
+function destroyTranscriptPlayer() {
+  const viewer = state.transcriptViewer;
+  if (!viewer) return;
+  saveTranscriptProgress();
+  viewer.player?.destroy?.();
+  viewer.player = null;
+}
+
+function saveTranscriptProgress() {
+  const viewer = state.transcriptViewer;
+  const video = $("#transcriptVideo");
+  if (!viewer || !Number.isFinite(video.currentTime) || video.currentTime <= 0) return;
+  localStorage.setItem(transcriptProgressKey(viewer.jobId), String(video.currentTime));
+  viewer.lastProgressSavedAt = video.currentTime;
+}
+
+function setTranscriptFollowing(following) {
+  if (!state.transcriptViewer) return;
+  state.transcriptViewer.following = following;
+  $("#followTranscript").disabled = following;
+}
+
+function currentTranscriptSegment(seconds) {
+  const segments = state.transcriptViewer?.segments || [];
+  return segments.find((segment) => seconds >= segment.start_second && seconds < segment.end_second)
+    || segments.find((segment) => seconds < segment.end_second)
+    || segments[segments.length - 1]
+    || null;
+}
+
+function updateTranscriptSegment(seconds, scroll = false) {
+  const viewer = state.transcriptViewer;
+  if (!viewer) return;
+  const segment = currentTranscriptSegment(seconds);
+  if (!segment || viewer.currentSegmentId === segment.id) return;
+  viewer.currentSegmentId = segment.id;
+  viewer.segmentElements.forEach((element, segmentId) => {
+    element.classList.toggle("is-current-segment", segmentId === segment.id);
+  });
+  if (scroll && viewer.following) {
+    viewer.segmentElements.get(segment.id)?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+}
+
+function transcriptSeconds(value) {
+  const clock = String(value).match(/\d{1,2}:\d{2}:\d{2}/)?.[0];
+  if (!clock) return null;
+  const parts = clock.split(":").map(Number);
+  return parts.length === 3 && parts.every(Number.isFinite)
+    ? parts[0] * 3600 + parts[1] * 60 + parts[2]
+    : null;
+}
+
+function parseTranscriptArtifact(markdown) {
+  const entries = [];
+  String(markdown).split(/\r?\n\s*\r?\n/).forEach((block) => {
+    const value = block.trim();
+    const match = value.match(/^\*(\d{1,2}:\d{2}:\d{2})\*\s*(?:\*\*([^*]+)\*\*)?\s*([\s\S]*)$/);
+    const notice = value.match(/^\*Ekraaniteade \((\d{1,2}:\d{2}:\d{2})\):\s*([\s\S]*)\*$/);
+    const timestamp = match?.[1] || notice?.[1];
+    if (timestamp) {
+      const startSecond = transcriptSeconds(timestamp);
+      if (startSecond !== null) {
+        entries.push({
+          id: entries.length,
+          start_second: startSecond,
+          timestamp,
+          speaker: match?.[2] || "",
+          text: match ? match[3] : `Ekraaniteade: ${notice?.[2] || ""}`,
+          is_notice: Boolean(notice),
+        });
+      }
+      return;
+    }
+    value.split(/\r?\n/).forEach((line) => {
+      const automatic = line.match(/^\*\*([^*]+)\*\* \(\*([^*]+)\*\):\s*(.*)$/);
+      if (!automatic) return;
+      const startSecond = transcriptSeconds(automatic[2]);
+      if (startSecond === null) return;
+      entries.push({
+        id: entries.length,
+        start_second: startSecond,
+        timestamp: automatic[2],
+        speaker: automatic[1],
+        text: automatic[3] || "",
+      });
+    });
+  });
+  return entries.map((entry, index) => ({ ...entry, end_second: entries[index + 1]?.start_second ?? Number.POSITIVE_INFINITY }));
+}
+
+function renderTranscriptArtifact(markdown) {
+  const content = $("#transcriptContent");
+  content.replaceChildren();
+  const viewer = state.transcriptViewer;
+  const segments = parseTranscriptArtifact(markdown);
+  viewer.segments = segments;
+  viewer.segmentElements = new Map();
+  viewer.currentSegmentId = null;
+  segments.forEach((segment) => {
+    const row = document.createElement("div");
+    row.className = "transcript-segment";
+    const timestamp = document.createElement("button");
+    timestamp.type = "button";
+    timestamp.className = "transcript-time-link";
+    timestamp.textContent = segment.timestamp;
+    timestamp.addEventListener("click", () => seekTranscriptVideo(segment.start_second, true));
+    const speaker = document.createElement("strong");
+    speaker.className = "transcript-speaker";
+    speaker.textContent = segment.speaker;
+    const text = document.createElement("span");
+    text.className = "transcript-text";
+    text.textContent = segment.text;
+    row.append(timestamp);
+    if (segment.speaker) row.append(speaker);
+    row.append(text);
+    viewer.segmentElements.set(segment.id, row);
+    content.appendChild(row);
+  });
+  updateTranscriptSegment($("#transcriptVideo").currentTime || 0, true);
+}
+
+async function loadTranscriptVersion(versionId) {
+  const viewer = state.transcriptViewer;
+  if (!viewer) return;
+  const version = viewer.versions.get(Number(versionId));
+  if (!version) return;
+  const message = $("#transcriptViewerMessage");
+  message.textContent = translate("viewer.loading");
+  try {
+    const response = await fetch(`${API_BASE}/jobs/${viewer.jobId}/artifacts/${version.artifact_id}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const markdown = await response.text();
+    if (state.transcriptViewer !== viewer) return;
+    renderTranscriptArtifact(markdown);
+    message.textContent = "";
+  } catch (error) {
+    if (state.transcriptViewer === viewer) message.textContent = error.message;
+  }
+}
+
+function seekTranscriptVideo(seconds, play) {
+  const video = $("#transcriptVideo");
+  $("#transcriptVideoContainer").hidden = false;
+  const seek = () => {
+    video.currentTime = Number(seconds);
+    setTranscriptFollowing(true);
+    updateTranscriptSegment(video.currentTime, true);
+    if (play) video.play().catch(() => {});
+  };
+  if (video.readyState >= HTMLMediaElement.HAVE_METADATA) seek();
+  else video.addEventListener("loadedmetadata", seek, { once: true });
+}
+
+function loadTranscriptVideo(mediaUrl, progress) {
+  const viewer = state.transcriptViewer;
+  const video = $("#transcriptVideo");
+  viewer.player?.destroy?.();
+  viewer.player = participantVideo(video, $("#transcriptViewerMessage"), mediaUrl);
+  const restore = () => {
+    if (progress > 0 && Number.isFinite(video.duration) && progress < video.duration) video.currentTime = progress;
+    updateTranscriptSegment(video.currentTime || 0, true);
+  };
+  video.addEventListener("loadedmetadata", restore, { once: true });
+}
+
+async function showTranscriptViewer(jobId) {
+  const dialog = $("#transcriptViewer");
+  const select = $("#transcriptVersionSelect");
+  const message = $("#transcriptViewerMessage");
+  destroyTranscriptPlayer();
+  state.transcriptViewer = {
+    jobId, segments: [], versions: new Map(), segmentElements: new Map(), following: true,
+    currentSegmentId: null, player: null, lastProgressSavedAt: 0,
+  };
+  select.replaceChildren();
+  message.textContent = translate("viewer.loading");
+  $("#transcriptContent").replaceChildren();
+  $("#transcriptVideoContainer").hidden = false;
+  dialog.showModal();
+  try {
+    const data = await request(`/jobs/${jobId}/transcript-versions`);
+    if (state.transcriptViewer?.jobId !== jobId) return;
+    data.versions.forEach((version) => {
+      state.transcriptViewer.versions.set(Number(version.id), version);
+      const option = document.createElement("option");
+      option.value = String(version.id);
+      const type = translate(`viewer.version_${String(version.version_type).toLowerCase()}`);
+      option.textContent = `${type} (${version.version_number})`;
+      select.appendChild(option);
+    });
+    select.value = String(data.default_version_id);
+    const progress = Number(localStorage.getItem(transcriptProgressKey(jobId))) || 0;
+    loadTranscriptVideo(data.media_url, progress);
+    await loadTranscriptVersion(data.default_version_id);
+  } catch (error) {
+    if (state.transcriptViewer?.jobId === jobId) message.textContent = error.message;
+  }
 }
 
 async function showParticipantReview(jobId) {
@@ -1646,6 +1858,41 @@ $("#artifactViewerDownload").addEventListener("click", async () => {
 $("#artifactViewer").addEventListener("click", (event) => {
   if (event.target === $("#artifactViewer")) $("#artifactViewer").close();
 });
+$("#transcriptViewerClose").addEventListener("click", () => $("#transcriptViewer").close());
+$("#transcriptViewer").addEventListener("close", () => {
+  destroyTranscriptPlayer();
+  state.transcriptViewer = null;
+  $("#transcriptVideo").removeAttribute("src");
+  $("#transcriptVideo").load();
+});
+$("#transcriptViewer").addEventListener("click", (event) => {
+  if (event.target === $("#transcriptViewer")) $("#transcriptViewer").close();
+});
+$("#transcriptVersionSelect").addEventListener("change", (event) => loadTranscriptVersion(Number(event.target.value)));
+$("#closeTranscriptVideo").addEventListener("click", () => {
+  saveTranscriptProgress();
+  $("#transcriptVideo").pause();
+  $("#transcriptVideoContainer").hidden = true;
+});
+$("#followTranscript").addEventListener("click", () => {
+  setTranscriptFollowing(true);
+  updateTranscriptSegment($("#transcriptVideo").currentTime || 0, true);
+});
+$("#transcriptContent").addEventListener("wheel", () => setTranscriptFollowing(false), { passive: true });
+$("#transcriptContent").addEventListener("touchstart", () => setTranscriptFollowing(false), { passive: true });
+$("#transcriptContent").addEventListener("pointerdown", () => setTranscriptFollowing(false));
+$("#transcriptVideo").addEventListener("timeupdate", () => {
+  const video = $("#transcriptVideo");
+  updateTranscriptSegment(video.currentTime, true);
+  const viewer = state.transcriptViewer;
+  if (viewer && Math.abs(video.currentTime - viewer.lastProgressSavedAt) >= 5) saveTranscriptProgress();
+});
+$("#transcriptVideo").addEventListener("pause", saveTranscriptProgress);
+$("#transcriptVideo").addEventListener("ended", () => {
+  const viewer = state.transcriptViewer;
+  if (viewer) localStorage.removeItem(transcriptProgressKey(viewer.jobId));
+});
+window.addEventListener("pagehide", saveTranscriptProgress);
 
 function renderHistory() {
   const container = $("#historyList");
@@ -1732,6 +1979,14 @@ function renderHistory() {
       button.textContent = translate("history.results");
       button.addEventListener("click", () => openResultsViewer(job.id));
       actions.appendChild(button);
+    }
+    if (job.has_transcript) {
+      const viewButton = document.createElement("button");
+      viewButton.type = "button";
+      viewButton.className = "results-button";
+      viewButton.textContent = translate("viewer.view");
+      viewButton.addEventListener("click", () => showTranscriptViewer(job.id));
+      actions.appendChild(viewButton);
     }
     if (job.status === "WAITING_FOR_PARTICIPANTS") {
       const participantsButton = document.createElement("button");

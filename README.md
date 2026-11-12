@@ -1,4 +1,4 @@
-# ERR2TEXT MVP3
+# ERR2TEXT MVP4
 
 Projekti tööreeglid ja tõeallikate register on dokumendis
 [`docs/agents.md`](docs/agents.md).
@@ -27,6 +27,9 @@ kohalikku järjekorda ega selle varumehhanismi ei ole.
 MVP3 täpne leping ja kasutuselevõtu järjekord on dokumendis
 [`docs/mvp3_ords_queue.md`](docs/mvp3_ords_queue.md). Keskse API üldleping on
 serveri dokumendis `/home/ubuntu/projektid/jenkins/docs/api.md`.
+
+MVP4 videoga transkriptsioonivaate nõuded ja lahendus on dokumendis
+[`docs/mvp4_videovaade.md`](docs/mvp4_videovaade.md).
 
 ## MVP3 taustatöö
 
